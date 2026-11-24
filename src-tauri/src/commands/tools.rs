@@ -1,0 +1,917 @@
+//! Tauri IPC commands for comet management (SQLite) and astronomical calculator (Phase 7).
+
+use serde::{Deserialize, Serialize};
+use tauri::State;
+
+use crate::commands::calendar::format_local_hm;
+use crate::engine::comet::comet_ephemeris;
+use crate::engine::comet_db::{CometDb, CometRecord};
+use crate::engine::coords::{
+    Equatorial, angular_distance_deg, apply_standard_refraction, equatorial_j2000_to_galactic,
+    equatorial_to_ecliptic, equatorial_to_horizontal, wrap_deg_180, wrap_deg_360,
+};
+use crate::engine::ephemeris::geocentric_to_topocentric;
+use crate::engine::precession::{
+    B1950_JD, J2000_JD, OBLIQUITY_J2000_DEG, b1950_to_j2000, j2000_to_b1950,
+    precess_between_epochs,
+};
+use crate::engine::rise_set::{
+    ObserverLocation, altitude_crossing_times, equatorial_j2000_rise_set,
+};
+use crate::engine::satellite::{
+    SatellitePass, SatelliteSkyPos, parse_tle_text, predict_satellite_passes,
+    propagate_satellite_at,
+};
+use crate::engine::time::{
+    delta_t_seconds, equation_of_time_min, gast_deg, gmst_deg, jd_to_mjd, jd_to_ymd_hms,
+    last_deg, lst_deg, mjd_to_jd, ut_to_tt_jd, ymd_hms_to_jd,
+};
+
+fn format_hms_angle(deg: f64, signed: bool) -> String {
+    let wrapped = if signed {
+        wrap_deg_180(deg)
+    } else {
+        wrap_deg_360(deg)
+    };
+    let sign = if signed {
+        if wrapped < 0.0 { "-" } else { "+" }
+    } else {
+        ""
+    };
+    let total_sec = (wrapped.abs() / 15.0) * 3600.0;
+    let h = (total_sec / 3600.0).floor() as u32;
+    let rem = total_sec - f64::from(h) * 3600.0;
+    let m = (rem / 60.0).floor() as u32;
+    let s = rem - f64::from(m) * 60.0;
+    format!("{sign}{h:02}h {m:02}m {s:05.2}s")
+}
+
+fn format_dms_angle(deg: f64, signed: bool) -> String {
+    let sign = if signed {
+        if deg < 0.0 { "-" } else { "+" }
+    } else {
+        ""
+    };
+    let total_arcsec = deg.abs() * 3600.0;
+    let d = (total_arcsec / 3600.0).floor() as u32;
+    let rem = total_arcsec - f64::from(d) * 3600.0;
+    let m = (rem / 60.0).floor() as u32;
+    let s = rem - f64::from(m) * 60.0;
+    format!("{sign}{d:02}° {m:02}' {s:05.2}\"")
+}
+
+fn format_utc_datetime(jd_ut: f64) -> String {
+    let (y, m, d, hh, mm, ss) = jd_to_ymd_hms(jd_ut);
+    let mut s_round = ss.round() as i32;
+    let mut min = i32::from(mm);
+    let mut hr = i32::from(hh);
+    if s_round >= 60 {
+        s_round -= 60;
+        min += 1;
+    }
+    if min >= 60 {
+        min -= 60;
+        hr += 1;
+    }
+    if hr >= 24 {
+        let (y2, m2, d2, hh2, mm2, ss2) = jd_to_ymd_hms(jd_ut + 0.5 / 86400.0);
+        return format!("{y2:04}-{m2:02}-{d2:02} {hh2:02}:{mm2:02}:{:02}", ss2.floor() as u32);
+    }
+    format!("{y:04}-{m:02}-{d:02} {hr:02}:{min:02}:{s_round:02}")
+}
+
+fn format_local_datetime_sec(jd_ut: f64, tz_offset_min: i32) -> String {
+    format_utc_datetime(jd_ut + f64::from(tz_offset_min) / 1440.0)
+}
+
+fn weekday_ja_for_jd(local_jd: f64) -> String {
+    let day_num = (local_jd + 0.5).floor() as i64;
+    let idx = day_num.rem_euclid(7) as usize;
+    const DAYS: [&str; 7] = [
+        "月曜日",
+        "火曜日",
+        "水曜日",
+        "木曜日",
+        "金曜日",
+        "土曜日",
+        "日曜日",
+    ];
+    DAYS[idx].to_owned()
+}
+
+// =========================================================================
+// 1. Comet SQLite CRUD & Import/Export Commands
+// =========================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CometListRequest {
+    pub jd_ut: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub refraction: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CometWithEphemeris {
+    pub record: CometRecord,
+    pub ra_deg: f64,
+    pub dec_deg: f64,
+    pub az_deg: f64,
+    pub alt_deg: f64,
+    pub helio_au: f64,
+    pub geo_au: f64,
+    pub visual_magnitude: f64,
+    pub elongation_deg: f64,
+    pub phase_angle_deg: f64,
+    pub perihelion_date_str: String,
+    pub orbit_type_ja: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CometExportBundle {
+    #[allow(dead_code)]
+    format: Option<String>,
+    comets: Vec<CometRecord>,
+}
+
+#[derive(Debug, Serialize)]
+struct CometExportBundleOut {
+    format: String,
+    comets: Vec<CometRecord>,
+}
+
+fn orbit_type_label(q_au: f64, e: f64) -> String {
+    if (e - 1.0).abs() <= 1e-4 {
+        "放物線軌道".into()
+    } else if e < 1.0 {
+        let a = q_au / (1.0 - e).max(1e-6);
+        let period_y = a.powf(1.5);
+        format!("楕円軌道 (周期 約{period_y:.1}年)")
+    } else {
+        "双曲線軌道".into()
+    }
+}
+
+pub fn list_comets_impl(
+    req: &CometListRequest,
+    db: &CometDb,
+) -> Result<Vec<CometWithEphemeris>, String> {
+    let records = db.list_all()?;
+    let jd_tt = ut_to_tt_jd(req.jd_ut);
+    let last = last_deg(req.jd_ut, req.lon_deg);
+
+    let mut out = Vec::with_capacity(records.len());
+    for rec in records {
+        let el = rec.to_elements();
+        let eph = comet_ephemeris(&el, jd_tt);
+        let topo = geocentric_to_topocentric(
+            eph.eq_apparent,
+            eph.geo_au,
+            req.lat_deg,
+            req.alt_m,
+            last,
+        );
+        let mut hor = equatorial_to_horizontal(topo, req.lat_deg, last);
+        if req.refraction {
+            hor.alt_deg = apply_standard_refraction(hor.alt_deg);
+        }
+        let (py, pm, pd, ph, pmin, _) = jd_to_ymd_hms(rec.epoch_perihelion_jd);
+        let peri_str = format!("{py:04}-{pm:02}-{pd:02} {ph:02}:{pmin:02} UTC");
+        let orbit_type_ja = orbit_type_label(rec.perihelion_dist_au, rec.eccentricity);
+        out.push(CometWithEphemeris {
+            record: rec,
+            ra_deg: eph.eq_apparent.ra_deg,
+            dec_deg: eph.eq_apparent.dec_deg,
+            az_deg: hor.az_deg,
+            alt_deg: hor.alt_deg,
+            helio_au: eph.helio_au,
+            geo_au: eph.geo_au,
+            visual_magnitude: eph.visual_magnitude,
+            elongation_deg: eph.elongation_deg,
+            phase_angle_deg: eph.phase_angle_deg,
+            perihelion_date_str: peri_str,
+            orbit_type_ja,
+        });
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn list_comets_cmd(
+    req: CometListRequest,
+    db: State<'_, CometDb>,
+) -> Result<Vec<CometWithEphemeris>, String> {
+    list_comets_impl(&req, &db)
+}
+
+#[tauri::command]
+pub fn upsert_comet_cmd(
+    record: CometRecord,
+    db: State<'_, CometDb>,
+) -> Result<CometRecord, String> {
+    db.upsert(record)
+}
+
+#[tauri::command]
+pub fn set_comet_enabled_cmd(
+    id: String,
+    enabled: bool,
+    db: State<'_, CometDb>,
+) -> Result<(), String> {
+    db.set_enabled(&id, enabled)
+}
+
+#[tauri::command]
+pub fn delete_comet_cmd(id: String, db: State<'_, CometDb>) -> Result<bool, String> {
+    db.delete(&id)
+}
+
+pub fn import_comets_json_impl(
+    json_text: &str,
+    replace_all: bool,
+    db: &CometDb,
+) -> Result<usize, String> {
+    let trimmed = json_text.trim();
+    if trimmed.is_empty() {
+        return Err("JSONデータが空です".into());
+    }
+    let records: Vec<CometRecord> = if trimmed.starts_with('[') {
+        serde_json::from_str(trimmed)
+            .map_err(|e| format!("JSON配列の解析に失敗しました: {e}"))?
+    } else {
+        let bundle: CometExportBundle = serde_json::from_str(trimmed)
+            .map_err(|e| format!("JSONオブジェクトの解析に失敗しました: {e}"))?;
+        bundle.comets
+    };
+    if records.is_empty() {
+        return Err("インポートする彗星レコードが含まれていません".into());
+    }
+    db.import_records(records, replace_all)
+}
+
+#[tauri::command]
+pub fn import_comets_json_cmd(
+    json_text: String,
+    replace_all: bool,
+    db: State<'_, CometDb>,
+) -> Result<usize, String> {
+    import_comets_json_impl(&json_text, replace_all, &db)
+}
+
+pub fn export_comets_json_impl(db: &CometDb) -> Result<String, String> {
+    let comets = db.list_all()?;
+    let bundle = CometExportBundleOut {
+        format: "starcrane-comets-v1".into(),
+        comets,
+    };
+    serde_json::to_string_pretty(&bundle).map_err(|e| format!("JSON出力に失敗しました: {e}"))
+}
+
+#[tauri::command]
+pub fn export_comets_json_cmd(db: State<'_, CometDb>) -> Result<String, String> {
+    export_comets_json_impl(&db)
+}
+
+#[tauri::command]
+pub fn reset_default_comets_cmd(
+    replace_all: bool,
+    db: State<'_, CometDb>,
+) -> Result<usize, String> {
+    db.restore_defaults(replace_all)
+}
+
+// =========================================================================
+// 2. Astronomical Calculator Commands (All 9 Functions)
+// =========================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CalcJdRequest {
+    pub mode: String, // "from_calendar" | "from_jd" | "from_mjd"
+    pub year: i32,
+    pub month: u8,
+    pub day: u8,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: f64,
+    pub tz_offset_min: i32,
+    pub jd_ut: f64,
+    pub mjd_ut: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcJdResult {
+    pub jd_ut: f64,
+    pub mjd_ut: f64,
+    pub jd_tt: f64,
+    pub delta_t_sec: f64,
+    pub utc_str: String,
+    pub local_str: String,
+    pub weekday_ja: String,
+    pub julian_centuries_j2000: f64,
+    pub equation_of_time_min: f64,
+}
+
+pub fn calc_julian_day_impl(req: &CalcJdRequest) -> CalcJdResult {
+    let jd_ut = match req.mode.trim().to_ascii_lowercase().as_str() {
+        "from_jd" => req.jd_ut,
+        "from_mjd" => mjd_to_jd(req.mjd_ut),
+        _ => {
+            let local_jd = ymd_hms_to_jd(
+                req.year,
+                req.month.clamp(1, 12),
+                req.day.clamp(1, 31),
+                req.hour.min(23),
+                req.minute.min(59),
+                req.second.clamp(0.0, 59.999),
+            );
+            local_jd - f64::from(req.tz_offset_min) / 1440.0
+        }
+    };
+
+    let mjd_ut = jd_to_mjd(jd_ut);
+    let jd_tt = ut_to_tt_jd(jd_ut);
+    let dec_year = 2000.0 + (jd_ut - J2000_JD) / 365.25;
+    let delta_t_sec = delta_t_seconds(dec_year);
+    let local_jd = jd_ut + f64::from(req.tz_offset_min) / 1440.0;
+
+    CalcJdResult {
+        jd_ut,
+        mjd_ut,
+        jd_tt,
+        delta_t_sec,
+        utc_str: format_utc_datetime(jd_ut),
+        local_str: format_local_datetime_sec(jd_ut, req.tz_offset_min),
+        weekday_ja: weekday_ja_for_jd(local_jd),
+        julian_centuries_j2000: (jd_tt - J2000_JD) / 36525.0,
+        equation_of_time_min: equation_of_time_min(jd_tt),
+    }
+}
+
+#[tauri::command]
+pub fn calc_julian_day_cmd(req: CalcJdRequest) -> CalcJdResult {
+    calc_julian_day_impl(&req)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CalcSiderealRequest {
+    pub jd_ut: f64,
+    pub lon_deg: f64,
+    pub ra_deg: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcSiderealResult {
+    pub gmst_deg: f64,
+    pub gmst_hms: String,
+    pub gast_deg: f64,
+    pub gast_hms: String,
+    pub lst_deg: f64,
+    pub lst_hms: String,
+    pub last_deg: f64,
+    pub last_hms: String,
+    pub hour_angle_deg: f64,
+    pub hour_angle_hms: String,
+    pub hours_to_transit: f64,
+}
+
+pub fn calc_sidereal_ha_impl(req: &CalcSiderealRequest) -> CalcSiderealResult {
+    let gmst = gmst_deg(req.jd_ut);
+    let gast = gast_deg(req.jd_ut);
+    let lst = lst_deg(req.jd_ut, req.lon_deg);
+    let last = last_deg(req.jd_ut, req.lon_deg);
+    let ha_signed = wrap_deg_180(last - req.ra_deg);
+    // Sidereal day / solar day = 1.00273790935
+    let hours_to_transit = -ha_signed / (15.0 * 1.002_737_909_35);
+
+    CalcSiderealResult {
+        gmst_deg: gmst,
+        gmst_hms: format_hms_angle(gmst, false),
+        gast_deg: gast,
+        gast_hms: format_hms_angle(gast, false),
+        lst_deg: lst,
+        lst_hms: format_hms_angle(lst, false),
+        last_deg: last,
+        last_hms: format_hms_angle(last, false),
+        hour_angle_deg: ha_signed,
+        hour_angle_hms: format_hms_angle(ha_signed, true),
+        hours_to_transit,
+    }
+}
+
+#[tauri::command]
+pub fn calc_sidereal_ha_cmd(req: CalcSiderealRequest) -> CalcSiderealResult {
+    calc_sidereal_ha_impl(&req)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CalcElapsedRequest {
+    pub jd_start_ut: f64,
+    pub jd_end_ut: f64,
+    pub offset_days: f64,
+    pub tz_offset_min: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcElapsedResult {
+    pub diff_days: f64,
+    pub diff_hours: f64,
+    pub diff_minutes: f64,
+    pub diff_seconds: f64,
+    pub diff_julian_years: f64,
+    pub diff_weeks: f64,
+    pub diff_sidereal_hours: f64,
+    pub breakdown_text: String,
+    pub shifted_jd_ut: f64,
+    pub shifted_local_str: String,
+    pub shifted_utc_str: String,
+}
+
+pub fn calc_elapsed_time_impl(req: &CalcElapsedRequest) -> CalcElapsedResult {
+    let diff_days = req.jd_end_ut - req.jd_start_ut;
+    let diff_hours = diff_days * 24.0;
+    let diff_minutes = diff_days * 1440.0;
+    let diff_seconds = diff_days * 86400.0;
+
+    let sign = if diff_days < 0.0 { "-" } else { "+" };
+    let abs_sec = diff_seconds.abs();
+    let d = (abs_sec / 86400.0).floor() as i64;
+    let rem1 = abs_sec - (d as f64) * 86400.0;
+    let h = (rem1 / 3600.0).floor() as i64;
+    let rem2 = rem1 - (h as f64) * 3600.0;
+    let m = (rem2 / 60.0).floor() as i64;
+    let s = rem2 - (m as f64) * 60.0;
+    let breakdown_text = format!("{sign}{d}日 {h:02}時間 {m:02}分 {s:04.1}秒");
+
+    let shifted_jd_ut = req.jd_start_ut + req.offset_days;
+    CalcElapsedResult {
+        diff_days,
+        diff_hours,
+        diff_minutes,
+        diff_seconds,
+        diff_julian_years: diff_days / 365.25,
+        diff_weeks: diff_days / 7.0,
+        diff_sidereal_hours: diff_hours * 1.002_737_909_35,
+        breakdown_text,
+        shifted_jd_ut,
+        shifted_local_str: format_local_datetime_sec(shifted_jd_ut, req.tz_offset_min),
+        shifted_utc_str: format_utc_datetime(shifted_jd_ut),
+    }
+}
+
+#[tauri::command]
+pub fn calc_elapsed_time_cmd(req: CalcElapsedRequest) -> CalcElapsedResult {
+    calc_elapsed_time_impl(&req)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CalcAngDistRequest {
+    pub ra1_deg: f64,
+    pub dec1_deg: f64,
+    pub ra2_deg: f64,
+    pub dec2_deg: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcAngDistResult {
+    pub distance_deg: f64,
+    pub distance_arcmin: f64,
+    pub distance_arcsec: f64,
+    pub distance_dms: String,
+    pub position_angle_deg: f64,
+}
+
+pub fn calc_angular_distance_impl(req: &CalcAngDistRequest) -> CalcAngDistResult {
+    let eq1 = Equatorial {
+        ra_deg: req.ra1_deg,
+        dec_deg: req.dec1_deg,
+    };
+    let eq2 = Equatorial {
+        ra_deg: req.ra2_deg,
+        dec_deg: req.dec2_deg,
+    };
+    let distance_deg = angular_distance_deg(eq1, eq2);
+
+    let a1 = req.ra1_deg.to_radians();
+    let d1 = req.dec1_deg.to_radians();
+    let a2 = req.ra2_deg.to_radians();
+    let d2 = req.dec2_deg.to_radians();
+    let y = d2.cos() * (a2 - a1).sin();
+    let x = d1.cos() * d2.sin() - d1.sin() * d2.cos() * (a2 - a1).cos();
+    let position_angle_deg = wrap_deg_360(y.atan2(x).to_degrees());
+
+    CalcAngDistResult {
+        distance_deg,
+        distance_arcmin: distance_deg * 60.0,
+        distance_arcsec: distance_deg * 3600.0,
+        distance_dms: format_dms_angle(distance_deg, false),
+        position_angle_deg,
+    }
+}
+
+#[tauri::command]
+pub fn calc_angular_distance_cmd(req: CalcAngDistRequest) -> CalcAngDistResult {
+    calc_angular_distance_impl(&req)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CalcAltTimeRequest {
+    pub ra_j2000_deg: f64,
+    pub dec_j2000_deg: f64,
+    pub target_alt_deg: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub tz_offset_min: i32,
+    pub year: i32,
+    pub month: u8,
+    pub day: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcAltTimeResult {
+    pub rising_jd_ut: Option<f64>,
+    pub rising_local_str: Option<String>,
+    pub setting_jd_ut: Option<f64>,
+    pub setting_local_str: Option<String>,
+    pub transit_jd_ut: Option<f64>,
+    pub transit_local_str: Option<String>,
+    pub max_alt_deg: f64,
+    pub min_alt_deg: f64,
+    pub status_ja: String,
+}
+
+pub fn calc_altitude_times_impl(req: &CalcAltTimeRequest) -> CalcAltTimeResult {
+    let eq_j2000 = Equatorial {
+        ra_deg: req.ra_j2000_deg,
+        dec_deg: req.dec_j2000_deg,
+    };
+    let loc = ObserverLocation {
+        lat_deg: req.lat_deg,
+        lon_deg: req.lon_deg,
+        alt_m: req.alt_m,
+        tz_offset_min: req.tz_offset_min,
+    };
+    let rs = equatorial_j2000_rise_set(eq_j2000, &loc, req.year, req.month, req.day);
+    let (rising, setting) = altitude_crossing_times(
+        eq_j2000,
+        req.target_alt_deg,
+        &loc,
+        req.year,
+        req.month,
+        req.day,
+    );
+
+    let max_app = apply_standard_refraction(rs.max_alt_deg);
+    let min_app = apply_standard_refraction(rs.min_alt_deg);
+
+    let status_ja = if rising.is_some() || setting.is_some() {
+        "到達あり".into()
+    } else if min_app >= req.target_alt_deg {
+        "一日中指定高度以上".into()
+    } else {
+        "指定高度に到達しない".into()
+    };
+
+    CalcAltTimeResult {
+        rising_jd_ut: rising,
+        rising_local_str: format_local_hm(rising, req.tz_offset_min),
+        setting_jd_ut: setting,
+        setting_local_str: format_local_hm(setting, req.tz_offset_min),
+        transit_jd_ut: rs.transit_jd_ut,
+        transit_local_str: format_local_hm(rs.transit_jd_ut, req.tz_offset_min),
+        max_alt_deg: max_app,
+        min_alt_deg: min_app,
+        status_ja,
+    }
+}
+
+#[tauri::command]
+pub fn calc_altitude_times_cmd(req: CalcAltTimeRequest) -> CalcAltTimeResult {
+    calc_altitude_times_impl(&req)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CalcEpochConvertRequest {
+    pub ra_deg: f64,
+    pub dec_deg: f64,
+    pub mode: String, // "b1950_to_j2000" | "j2000_to_b1950" | "custom"
+    pub from_epoch_year: Option<f64>,
+    pub to_epoch_year: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcEpochConvertResult {
+    pub out_ra_deg: f64,
+    pub out_dec_deg: f64,
+    pub out_ra_hms: String,
+    pub out_dec_dms: String,
+    pub delta_ra_arcsec: f64,
+    pub delta_dec_arcsec: f64,
+    pub ecl_lon_deg: f64,
+    pub ecl_lat_deg: f64,
+    pub gal_l_deg: f64,
+    pub gal_b_deg: f64,
+}
+
+fn epoch_year_to_jd(year: f64) -> f64 {
+    if (year - 1950.0).abs() < 1e-6 {
+        B1950_JD
+    } else if (year - 2000.0).abs() < 1e-6 {
+        J2000_JD
+    } else {
+        J2000_JD + (year - 2000.0) * 365.25
+    }
+}
+
+pub fn calc_epoch_convert_impl(req: &CalcEpochConvertRequest) -> CalcEpochConvertResult {
+    let input = Equatorial {
+        ra_deg: wrap_deg_360(req.ra_deg),
+        dec_deg: req.dec_deg.clamp(-89.999_9, 89.999_9),
+    };
+    let (converted, j2000_eq) = match req.mode.trim().to_ascii_lowercase().as_str() {
+        "b1950_to_j2000" => {
+            let out = b1950_to_j2000(input);
+            (out, out)
+        }
+        "j2000_to_b1950" => {
+            let out = j2000_to_b1950(input);
+            (out, input)
+        }
+        _ => {
+            let from_jd = epoch_year_to_jd(req.from_epoch_year.unwrap_or(2000.0));
+            let to_jd = epoch_year_to_jd(req.to_epoch_year.unwrap_or(2050.0));
+            let out = precess_between_epochs(input, from_jd, to_jd);
+            let j2k = precess_between_epochs(input, from_jd, J2000_JD);
+            (out, j2k)
+        }
+    };
+
+    let ecl = equatorial_to_ecliptic(j2000_eq, OBLIQUITY_J2000_DEG);
+    let gal = equatorial_j2000_to_galactic(j2000_eq);
+
+    CalcEpochConvertResult {
+        out_ra_deg: converted.ra_deg,
+        out_dec_deg: converted.dec_deg,
+        out_ra_hms: format_hms_angle(converted.ra_deg, false),
+        out_dec_dms: format_dms_angle(converted.dec_deg, true),
+        delta_ra_arcsec: wrap_deg_180(converted.ra_deg - input.ra_deg) * 3600.0,
+        delta_dec_arcsec: (converted.dec_deg - input.dec_deg) * 3600.0,
+        ecl_lon_deg: ecl.lon_deg,
+        ecl_lat_deg: ecl.lat_deg,
+        gal_l_deg: gal.l_deg,
+        gal_b_deg: gal.b_deg,
+    }
+}
+
+#[tauri::command]
+pub fn calc_epoch_convert_cmd(req: CalcEpochConvertRequest) -> CalcEpochConvertResult {
+    calc_epoch_convert_impl(&req)
+}
+
+// =========================================================================
+// 3. Artificial Satellite & ISS SGP4 Commands (Phase 8)
+// =========================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SatListRequest {
+    pub jd_ut: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub tz_offset_min: i32,
+    pub refraction: bool,
+}
+
+#[tauri::command]
+pub fn list_satellites_positions_cmd(
+    req: SatListRequest,
+    db: State<'_, CometDb>,
+) -> Result<Vec<SatelliteSkyPos>, String> {
+    let sats = db.list_satellites()?;
+    let loc = ObserverLocation {
+        lat_deg: req.lat_deg,
+        lon_deg: req.lon_deg,
+        alt_m: req.alt_m,
+        tz_offset_min: req.tz_offset_min,
+    };
+    let mut out = Vec::with_capacity(sats.len());
+    for s in sats {
+        if let Ok(pos) = propagate_satellite_at(&s, req.jd_ut, &loc, req.refraction) {
+            out.push(pos);
+        }
+    }
+    out.sort_by(|a, b| {
+        b.enabled
+            .cmp(&a.enabled)
+            .then_with(|| b.alt_deg.total_cmp(&a.alt_deg))
+    });
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SatPassRequest {
+    pub sat_id: String,
+    pub start_jd_ut: f64,
+    pub hours: f64,
+    pub min_max_alt_deg: f64,
+    pub visible_only: bool,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub tz_offset_min: i32,
+}
+
+#[tauri::command]
+pub fn predict_satellite_passes_cmd(
+    req: SatPassRequest,
+    db: State<'_, CometDb>,
+) -> Result<Vec<SatellitePass>, String> {
+    let sats = db.list_satellites()?;
+    let target = sats
+        .into_iter()
+        .find(|s| s.id.eq_ignore_ascii_case(&req.sat_id))
+        .ok_or_else(|| format!("衛星ID {} が見つかりません", req.sat_id))?;
+    let loc = ObserverLocation {
+        lat_deg: req.lat_deg,
+        lon_deg: req.lon_deg,
+        alt_m: req.alt_m,
+        tz_offset_min: req.tz_offset_min,
+    };
+    predict_satellite_passes(
+        &target,
+        req.start_jd_ut,
+        req.hours,
+        req.min_max_alt_deg,
+        req.visible_only,
+        &loc,
+    )
+}
+
+#[tauri::command]
+pub fn import_tle_text_cmd(
+    tle_text: String,
+    category: String,
+    db: State<'_, CometDb>,
+) -> Result<usize, String> {
+    let cat = if category.trim().is_empty() {
+        "custom"
+    } else {
+        category.trim()
+    };
+    let recs = parse_tle_text(&tle_text, cat);
+    if recs.is_empty() {
+        return Err("有効なTLEデータ（2行または3行形式）が見つかりませんでした".into());
+    }
+    db.upsert_satellites_batch(recs, None)
+}
+
+#[tauri::command]
+pub fn set_satellite_enabled_cmd(
+    id: String,
+    enabled: bool,
+    db: State<'_, CometDb>,
+) -> Result<(), String> {
+    db.set_satellite_enabled(&id, enabled)
+}
+
+#[tauri::command]
+pub fn delete_satellite_cmd(id: String, db: State<'_, CometDb>) -> Result<bool, String> {
+    db.delete_satellite(&id)
+}
+
+#[tauri::command]
+pub fn reset_default_satellites_cmd(db: State<'_, CometDb>) -> Result<usize, String> {
+    db.restore_default_satellites()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::time::calendar_to_jd;
+
+    #[test]
+    fn astro_calculator_commands_accuracy() {
+        // 1. JD / MJD round-trip at J2000.0 (2000-01-01 12:00:00 UTC)
+        let jd_res = calc_julian_day_impl(&CalcJdRequest {
+            mode: "from_calendar".into(),
+            year: 2000,
+            month: 1,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0.0,
+            tz_offset_min: 0,
+            jd_ut: 0.0,
+            mjd_ut: 0.0,
+        });
+        assert!((jd_res.jd_ut - 2_451_545.0).abs() < 1e-9);
+        assert!((jd_res.mjd_ut - 51_544.5).abs() < 1e-9);
+        assert_eq!(jd_res.weekday_ja, "土曜日");
+
+        let from_mjd = calc_julian_day_impl(&CalcJdRequest {
+            mode: "from_mjd".into(),
+            year: 2000,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0.0,
+            tz_offset_min: 540,
+            jd_ut: 0.0,
+            mjd_ut: 51_544.5,
+        });
+        assert!((from_mjd.jd_ut - 2_451_545.0).abs() < 1e-9);
+
+        // 2. LST / Hour angle sanity
+        let sid = calc_sidereal_ha_impl(&CalcSiderealRequest {
+            jd_ut: 2_451_545.0,
+            lon_deg: 135.0,
+            ra_deg: 0.0,
+        });
+        assert!((sid.lst_deg - wrap_deg_360(sid.gmst_deg + 135.0)).abs() < 1e-6);
+        assert!(sid.hours_to_transit >= -12.1 && sid.hours_to_transit <= 12.1);
+
+        // 3. Elapsed time
+        let elapsed = calc_elapsed_time_impl(&CalcElapsedRequest {
+            jd_start_ut: calendar_to_jd(2026, 1, 1.0),
+            jd_end_ut: calendar_to_jd(2026, 1, 11.5),
+            offset_days: 30.0,
+            tz_offset_min: 540,
+        });
+        assert!((elapsed.diff_days - 10.5).abs() < 1e-9);
+        assert!((elapsed.diff_hours - 252.0).abs() < 1e-9);
+        assert!(elapsed.diff_sidereal_hours > elapsed.diff_hours);
+
+        // 4. Angular distance & PA
+        let ang = calc_angular_distance_impl(&CalcAngDistRequest {
+            ra1_deg: 0.0,
+            dec1_deg: 0.0,
+            ra2_deg: 0.0,
+            dec2_deg: 10.0,
+        });
+        assert!((ang.distance_deg - 10.0).abs() < 1e-9);
+        assert!(ang.position_angle_deg.abs() < 1e-6);
+
+        // 5. Target altitude crossing times (Sirius at Akashi 2026-01-01 reaching 20 deg)
+        let alt_res = calc_altitude_times_impl(&CalcAltTimeRequest {
+            ra_j2000_deg: 101.287_155,
+            dec_j2000_deg: -16.716_116,
+            target_alt_deg: 20.0,
+            lat_deg: 34.6431,
+            lon_deg: 134.9972,
+            alt_m: 10.0,
+            tz_offset_min: 540,
+            year: 2026,
+            month: 1,
+            day: 1,
+        });
+        assert!(alt_res.rising_jd_ut.is_some());
+        assert!(alt_res.setting_jd_ut.is_some());
+        assert!(alt_res.max_alt_deg > 35.0);
+
+        // 6. B1950 <-> J2000 round-trip
+        let to_j2k = calc_epoch_convert_impl(&CalcEpochConvertRequest {
+            ra_deg: 150.0,
+            dec_deg: 25.0,
+            mode: "b1950_to_j2000".into(),
+            from_epoch_year: None,
+            to_epoch_year: None,
+        });
+        let back_b1950 = calc_epoch_convert_impl(&CalcEpochConvertRequest {
+            ra_deg: to_j2k.out_ra_deg,
+            dec_deg: to_j2k.out_dec_deg,
+            mode: "j2000_to_b1950".into(),
+            from_epoch_year: None,
+            to_epoch_year: None,
+        });
+        assert!((wrap_deg_180(back_b1950.out_ra_deg - 150.0)).abs() < 1e-6);
+        assert!((back_b1950.out_dec_deg - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn comet_json_import_export_and_ephemeris_work() {
+        let db = CometDb::open_in_memory().expect("db");
+        let list = list_comets_impl(
+            &CometListRequest {
+                jd_ut: calendar_to_jd(2026, 6, 1.0),
+                lat_deg: 34.6431,
+                lon_deg: 134.9972,
+                alt_m: 10.0,
+                refraction: true,
+            },
+            &db,
+        )
+        .expect("list comets");
+        assert_eq!(list.len(), 5);
+
+        let exported = export_comets_json_impl(&db).expect("export");
+        assert!(exported.contains("starcrane-comets-v1"));
+
+        let imported = import_comets_json_impl(&exported, false, &db).expect("reimport");
+        assert_eq!(imported, 5);
+
+        // Check invalid JSON rejection
+        assert!(import_comets_json_impl("{invalid", false, &db).is_err());
+    }
+}

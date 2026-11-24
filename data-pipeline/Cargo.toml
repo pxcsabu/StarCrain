@@ -1,0 +1,11 @@
+[package]
+name = "starcrane-data-pipeline"
+version = "0.1.0"
+edition = "2024"
+description = "Converts official astronomical text catalogs (HYG, OpenNGC, d3-celestial) into StarCrane runtime assets."
+
+[dependencies]
+csv = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"

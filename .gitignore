@@ -1,0 +1,24 @@
+# Dependencies & build outputs
+node_modules/
+dist/
+src-tauri/target/
+data-pipeline/target/
+data-pipeline/raw/
+
+# Logs, secrets & temporary local artifacts
+*.log
+*.key
+*.jks
+*.keystore
+inst_user_settings.tmp
+.DS_Store
+Thumbs.db
+
+# Local packaged distributions & generated Android native binaries
+dist-windows/
+dist-android/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/app/src/main/jniLibs/
+
+# Note: Keep Cargo.lock and pnpm-lock.yaml tracked for security audit
