@@ -55,6 +55,39 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        shell: pwsh
+        run: |
+          $pkg = Get-Content -Raw -Path package.json | ConvertFrom-Json
+          $ver = [string]$pkg.version
+          $body = "StarCrane Windows / Android 自動アップデート対応リリースです。"
+          if (Test-Path CHANGELOG.md) {
+            $lines = Get-Content -Path CHANGELOG.md -Encoding UTF8
+            $collecting = $false
+            $buf = New-Object System.Collections.Generic.List[string]
+            foreach ($line in $lines) {
+              if ($line -match "^##\s+v?$([regex]::Escape($ver))\b") {
+                $collecting = $true
+                continue
+              }
+              if ($collecting -and $line -match '^##\s+v?\d+\.\d+\.\d+') {
+                break
+              }
+              if ($collecting) {
+                $buf.Add($line)
+              }
+            }
+            $extracted = ($buf -join "`n").Trim()
+            if (-not [string]::IsNullOrWhiteSpace($extracted)) {
+              $body = $extracted
+            }
+          }
+          $delim = "EOF_NOTES_" + [Guid]::NewGuid().ToString("N")
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<$delim" -Encoding UTF8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $body -Encoding UTF8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $delim -Encoding UTF8
+
       - name: Build & publish StarCrane Windows NSIS Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -64,7 +97,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "StarCrane v__VERSION__"
-          releaseBody: "StarCrane Windows / Android 自動アップデート対応リリースです。"
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

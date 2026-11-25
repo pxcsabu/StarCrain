@@ -1,6 +1,8 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Compass,
   Copy,
   Database,
@@ -8,6 +10,7 @@ import {
   FileJson,
   Globe,
   HardDrive,
+  History,
   RefreshCw,
   RotateCcw,
   Save,
@@ -22,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CHANGELOG_ENTRIES, parseReleaseNotesLines } from "@/lib/changelog";
 import {
   buildCurrentObservationSnapshot,
   clearOfflineCacheTarget,
@@ -77,6 +81,7 @@ export function SettingsPanel() {
   const [snapTitle, setSnapTitle] = useState("");
   const [snapNote, setSnapNote] = useState("");
   const [packProgress, setPackProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+  const [changelogOpen, setChangelogOpen] = useState(false);
 
   const hipsConfig = useSkyStore((s) => s.hipsConfig);
   const centerOnSkyCoords = useSkyStore((s) => s.centerOnSkyCoords);
@@ -111,6 +116,7 @@ export function SettingsPanel() {
   const updaterStatus = useUpdaterStore((s) => s.status);
   const currentVersion = useUpdaterStore((s) => s.currentVersion);
   const availableVersion = useUpdaterStore((s) => s.availableVersion);
+  const releaseNotes = useUpdaterStore((s) => s.releaseNotes);
   const progressPct = useUpdaterStore((s) => s.progressPct);
   const updaterError = useUpdaterStore((s) => s.errorMessage);
   const updaterNotice = useUpdaterStore((s) => s.noticeMessage);
@@ -476,6 +482,22 @@ export function SettingsPanel() {
                   {updaterNotice && (
                     <div className="text-[10.5px] text-amber-300">{updaterNotice}</div>
                   )}
+                  {availableVersion && (() => {
+                    const incomingNotes = parseReleaseNotesLines(releaseNotes, availableVersion);
+                    if (incomingNotes.length === 0) return null;
+                    return (
+                      <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5 text-[10px]">
+                        <div className="mb-1 font-semibold text-[var(--accent-primary)]">
+                          v{availableVersion} の変更点
+                        </div>
+                        <ul className="list-disc space-y-0.5 pl-4 text-[var(--text-secondary)]">
+                          {incomingNotes.map((line, i) => (
+                            <li key={i}>{line}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })()}
                   <div className="flex flex-wrap gap-1.5">
                     {updaterStatus === "ready" && (
                       <Button
@@ -509,9 +531,67 @@ export function SettingsPanel() {
                 </>
               ) : (
                 <div className="text-[10.5px] text-[var(--text-muted)]">
-                  自動アップデート機能はデスクトップインストーラー版で利用できます。
+                  自動アップデート機能はデスクトップ / Android アプリ版で利用できます。
                 </div>
               )}
+
+              <div className="border-t border-[var(--border-subtle)] pt-2">
+                <button
+                  type="button"
+                  onClick={() => setChangelogOpen((v) => !v)}
+                  className="flex w-full items-center justify-between text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <History className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                    <span>更新履歴 (チェンジリスト)</span>
+                  </span>
+                  {changelogOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+                {changelogOpen && (
+                  <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
+                    {CHANGELOG_ENTRIES.map((entry) => (
+                      <div
+                        key={entry.version}
+                        className="rounded-lg border border-[var(--border-subtle)] bg-black/25 p-2 text-[10px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono-num font-bold text-[var(--text-primary)]">
+                              v{entry.version}
+                            </span>
+                            <span
+                              className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+                                entry.kind === "feature"
+                                  ? "bg-sky-500/20 text-sky-300"
+                                  : entry.kind === "fix"
+                                    ? "bg-amber-500/20 text-amber-300"
+                                    : "bg-emerald-500/20 text-emerald-300"
+                              }`}
+                            >
+                              {entry.kind === "feature"
+                                ? "機能追加"
+                                : entry.kind === "fix"
+                                  ? "改善・修正"
+                                  : "初回"}
+                            </span>
+                          </div>
+                          <span className="font-mono-num text-[9.5px] text-[var(--text-muted)]">
+                            {entry.date}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 font-medium text-[var(--text-secondary)]">
+                          {entry.title}
+                        </div>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--text-muted)]">
+                          {entry.items.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </section>
           </>
         )}

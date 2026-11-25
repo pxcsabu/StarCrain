@@ -40,6 +40,11 @@ import { useClockStore } from "@/store/clockStore";
 import { useSkyStore } from "@/store/skyStore";
 import { useThemeStore } from "@/store/themeStore";
 import {
+  findChangelogEntry,
+  normalizeVersionString,
+  parseReleaseNotesLines,
+} from "@/lib/changelog";
+import {
   isAndroidUpdaterSupported,
   isUpdaterSupported,
   useUpdaterStore,
@@ -144,7 +149,9 @@ export function App() {
   const dismissAlert = useClockStore((s) => s.dismissAlert);
 
   const updaterStatus = useUpdaterStore((s) => s.status);
+  const updaterCurrentVersion = useUpdaterStore((s) => s.currentVersion);
   const updaterVersion = useUpdaterStore((s) => s.availableVersion);
+  const updaterNotes = useUpdaterStore((s) => s.releaseNotes);
   const updaterDismissed = useUpdaterStore((s) => s.dismissed);
   const updaterError = useUpdaterStore((s) => s.errorMessage);
   const updaterNotice = useUpdaterStore((s) => s.noticeMessage);
@@ -152,6 +159,7 @@ export function App() {
   const dismissUpdateNotification = useUpdaterStore((s) => s.dismissNotification);
   const updaterSupported = isUpdaterSupported();
   const androidUpdater = isAndroidUpdaterSupported();
+  const [postUpdateVersion, setPostUpdateVersion] = useState<string | null>(null);
 
   const [dockOverlay, setDockOverlay] = useState<DockOverlayMode>(null);
   const [inspectorOnTop, setInspectorOnTop] = useState(true);
@@ -303,7 +311,23 @@ export function App() {
 
   useEffect(() => {
     if (!updaterSupported) return;
-    void useUpdaterStore.getState().initVersion();
+    let active = true;
+    void useUpdaterStore
+      .getState()
+      .initVersion()
+      .then(() => {
+        if (!active || typeof window === "undefined") return;
+        const ver = normalizeVersionString(useUpdaterStore.getState().currentVersion);
+        if (!ver) return;
+        const lastSeen = window.localStorage.getItem("starcrane-last-seen-version");
+        if (!lastSeen) {
+          window.localStorage.setItem("starcrane-last-seen-version", ver);
+        } else if (lastSeen !== ver && findChangelogEntry(ver)) {
+          setPostUpdateVersion(ver);
+        } else {
+          window.localStorage.setItem("starcrane-last-seen-version", ver);
+        }
+      });
     const initialTimer = window.setTimeout(() => {
       void useUpdaterStore.getState().checkAndAutoDownload(false);
     }, 3000);
@@ -311,6 +335,7 @@ export function App() {
       void useUpdaterStore.getState().checkAndAutoDownload(false);
     }, 4 * 60 * 60 * 1000);
     return () => {
+      active = false;
       window.clearTimeout(initialTimer);
       window.clearInterval(periodicTimer);
     };
@@ -443,67 +468,134 @@ export function App() {
 
       <CommandPalette />
 
-      {(activeAlert || (updaterStatus === "ready" && !updaterDismissed) || updaterStatus === "installing") && (
+      {(activeAlert ||
+        postUpdateVersion ||
+        (updaterStatus === "ready" && !updaterDismissed) ||
+        updaterStatus === "installing") && (
         <div className="fixed top-16 right-3 left-3 sm:left-auto sm:right-4 z-50 flex sm:max-w-sm flex-col gap-2">
-          {((updaterStatus === "ready" && !updaterDismissed) || updaterStatus === "installing") && (
-            <div className="starcrane-win-enter liquid-glass-sheet flex items-start gap-2.5 px-3.5 py-2.5 text-xs text-[var(--text-primary)]">
-              <RefreshCw
-                className={`mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-primary)] ${
-                  updaterStatus === "installing" ? "animate-spin" : ""
-                }`}
-              />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="font-semibold">
-                  {updaterStatus === "installing"
-                    ? `StarCrane v${updaterVersion} を適用中...`
-                    : `アップデート v${updaterVersion} の準備完了`}
-                </div>
-                <div className="text-[11px] text-[var(--text-secondary)]">
-                  {updaterStatus === "installing"
-                    ? androidUpdater
-                      ? "Androidのインストーラーを起動しています。"
-                      : "インストーラーを起動して自動再起動します。"
-                    : androidUpdater
-                      ? "最新APKのダウンロードが完了しました。タップしてインストーラーを起動します。"
-                      : "バックグラウンドでダウンロードが完了しました。再起動すると最新版が反映されます。"}
-                </div>
-                {updaterNotice && (
-                  <div className="text-[10.5px] text-amber-300">{updaterNotice}</div>
-                )}
-                {updaterError && (
-                  <div className="text-[10.5px] text-[var(--status-danger)]">{updaterError}</div>
-                )}
-                {updaterStatus === "ready" && (
-                  <div className="flex items-center gap-1.5 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => void installAndRestart()}
-                      className="rounded-full bg-[var(--accent-primary)] px-3 py-1 text-[11px] font-semibold text-[var(--accent-primary-fg)] transition-opacity hover:opacity-90"
-                    >
-                      {androidUpdater ? "今すぐインストールして更新" : "今すぐ再起動して更新"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={dismissUpdateNotification}
-                      className="rounded-full px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)]"
-                    >
-                      あとで
-                    </button>
+          {((updaterStatus === "ready" && !updaterDismissed) || updaterStatus === "installing") && (() => {
+            const notesList = parseReleaseNotesLines(updaterNotes, updaterVersion);
+            return (
+              <div className="starcrane-win-enter liquid-glass-sheet flex items-start gap-2.5 px-3.5 py-2.5 text-xs text-[var(--text-primary)]">
+                <RefreshCw
+                  className={`mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-primary)] ${
+                    updaterStatus === "installing" ? "animate-spin" : ""
+                  }`}
+                />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="font-semibold">
+                    {updaterStatus === "installing"
+                      ? `StarCrane v${updaterVersion} を適用中...`
+                      : `アップデート v${updaterVersion} の準備完了`}
                   </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">
+                    {updaterStatus === "installing"
+                      ? androidUpdater
+                        ? "Androidのインストーラーを起動しています。"
+                        : "インストーラーを起動して自動再起動します。"
+                      : androidUpdater
+                        ? "最新APKのダウンロードが完了しました。タップしてインストーラーを起動します。"
+                        : "バックグラウンドでダウンロードが完了しました。再起動すると最新版が反映されます。"}
+                  </div>
+                  {notesList.length > 0 && (
+                    <div className="max-h-36 overflow-y-auto rounded-lg border border-white/10 bg-black/35 px-2.5 py-1.5 text-[10.5px]">
+                      <div className="mb-1 font-semibold text-[var(--accent-primary)]">
+                        v{updaterVersion} チェンジリスト
+                      </div>
+                      <ul className="list-disc space-y-0.5 pl-4 text-[var(--text-secondary)]">
+                        {notesList.map((line, i) => (
+                          <li key={i}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {updaterNotice && (
+                    <div className="text-[10.5px] text-amber-300">{updaterNotice}</div>
+                  )}
+                  {updaterError && (
+                    <div className="text-[10.5px] text-[var(--status-danger)]">{updaterError}</div>
+                  )}
+                  {updaterStatus === "ready" && (
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => void installAndRestart()}
+                        className="rounded-full bg-[var(--accent-primary)] px-3 py-1 text-[11px] font-semibold text-[var(--accent-primary-fg)] transition-opacity hover:opacity-90"
+                      >
+                        {androidUpdater ? "今すぐインストールして更新" : "今すぐ再起動して更新"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={dismissUpdateNotification}
+                        className="rounded-full px-2.5 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)]"
+                      >
+                        あとで
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {updaterStatus === "ready" && (
+                  <button
+                    type="button"
+                    onClick={dismissUpdateNotification}
+                    className="rounded-full p-1 text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]"
+                    title="閉じる"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 )}
               </div>
-              {updaterStatus === "ready" && (
+            );
+          })()}
+
+          {postUpdateVersion && (() => {
+            const entry = findChangelogEntry(postUpdateVersion);
+            if (!entry) return null;
+            const dismissPostUpdate = () => {
+              if (typeof window !== "undefined") {
+                window.localStorage.setItem(
+                  "starcrane-last-seen-version",
+                  normalizeVersionString(updaterCurrentVersion) || postUpdateVersion,
+                );
+              }
+              setPostUpdateVersion(null);
+            };
+            return (
+              <div className="starcrane-win-enter liquid-glass-sheet flex items-start gap-2.5 px-3.5 py-2.5 text-xs text-[var(--text-primary)]">
+                <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="font-semibold">
+                    StarCrane v{entry.version} に更新されました
+                  </div>
+                  <div className="text-[10.5px] font-medium text-[var(--accent-primary)]">
+                    {entry.title}
+                  </div>
+                  <ul className="max-h-32 list-disc space-y-0.5 overflow-y-auto pl-4 text-[10.5px] text-[var(--text-secondary)]">
+                    {entry.items.map((item, i) => (
+                      <li key={i}>{item}</li>
+                    ))}
+                  </ul>
+                  <div className="pt-0.5">
+                    <button
+                      type="button"
+                      onClick={dismissPostUpdate}
+                      className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-medium hover:bg-white/20"
+                    >
+                      OK
+                    </button>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  onClick={dismissUpdateNotification}
+                  onClick={dismissPostUpdate}
                   className="rounded-full p-1 text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text-primary)]"
                   title="閉じる"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })()}
 
           {activeAlert && (
             <div className="starcrane-win-enter liquid-glass-sheet flex items-start gap-2.5 px-3.5 py-2.5 text-xs text-[var(--text-primary)]">
