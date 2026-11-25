@@ -10,6 +10,7 @@ pub mod precession;
 pub mod projection;
 pub mod rise_set;
 pub mod satellite;
+pub mod saturn_sat;
 pub mod sky_color;
 pub mod time;
 

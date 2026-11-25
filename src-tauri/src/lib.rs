@@ -77,6 +77,7 @@ pub fn run() {
             commands::planets::search_planet_phenomena_cmd,
             commands::planets::search_conjunctions_cmd,
             commands::planets::get_galilean_moons_view,
+            commands::planets::get_saturn_moons_view,
             commands::planets::get_solar_system_3d_state,
             commands::tools::list_comets_cmd,
             commands::tools::upsert_comet_cmd,
@@ -100,6 +101,15 @@ pub fn run() {
             commands::online::sync_mpc_comets_cmd,
             commands::online::sync_celestrak_tle_cmd,
             commands::online::fetch_open_meteo_weather_cmd,
+            commands::offline_cache::fetch_cached_survey_tile_cmd,
+            commands::offline_cache::fetch_cached_object_photo_cmd,
+            commands::offline_cache::prefetch_hips_tiles_cmd,
+            commands::offline_cache::get_offline_cache_stats_cmd,
+            commands::offline_cache::clear_offline_cache_cmd,
+            commands::offline_cache::save_offline_snapshot_cmd,
+            commands::offline_cache::list_offline_snapshots_cmd,
+            commands::offline_cache::load_offline_snapshot_cmd,
+            commands::offline_cache::delete_offline_snapshot_cmd,
             commands::updater::check_android_update_cmd,
             commands::updater::download_android_update_apk_cmd
         ])

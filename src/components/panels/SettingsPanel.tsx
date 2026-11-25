@@ -1,15 +1,20 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import {
   CheckCircle2,
+  Compass,
   Copy,
+  Database,
   Download,
   FileJson,
   Globe,
+  HardDrive,
   RefreshCw,
   RotateCcw,
+  Save,
   Settings,
   ShieldCheck,
   Sliders,
+  Trash2,
   Upload,
   Volume2,
   VolumeX,
@@ -17,6 +22,19 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  buildCurrentObservationSnapshot,
+  clearOfflineCacheTarget,
+  deleteOfflineSnapshot,
+  formatBytesCompact,
+  getOfflineCacheStats,
+  listOfflineSnapshots,
+  loadOfflineSnapshot,
+  prefetchAllSkyHipsPack,
+  prefetchCurrentViewHips,
+  restoreOfflineSnapshotToStore,
+  saveOfflineSnapshot,
+} from "@/lib/offlineSnapshots";
 import { useClockStore, type HourlyChimeMode } from "@/store/clockStore";
 import { useSkyStore } from "@/store/skyStore";
 import { type ThemeMode, useThemeStore } from "@/store/themeStore";
@@ -25,9 +43,15 @@ import {
   isUpdaterSupported,
   useUpdaterStore,
 } from "@/store/updaterStore";
-import type { AngleFormat, UnitSystem } from "@/types/sky";
+import type {
+  AngleFormat,
+  OfflineCacheStats,
+  OfflineObservationSnapshot,
+  OfflineSnapshotMeta,
+  UnitSystem,
+} from "@/types/sky";
 
-type SettingsTab = "general" | "profile" | "licenses";
+type SettingsTab = "general" | "offline" | "profile" | "licenses";
 
 const OPEN_DATA_LICENSES = [
   { name: "StarCrane Application Code", desc: "プラネタリウム・天文計算・UIソースコード", license: "MIT License" },
@@ -39,6 +63,7 @@ const OPEN_DATA_LICENSES = [
   { name: "dataofjapan/land & Natural Earth", desc: "全国47都道府県境界線・世界海岸線ポリゴンデータ", license: "MIT / Public Domain" },
   { name: "IAU Meteor Data Center / GCVS", desc: "年間主要流星群放射点データ・主要変光星カタログ", license: "Public Scientific Data" },
   { name: "MPC / CelesTrak / Open-Meteo", desc: "公式ホワイトリスト同期データ（彗星・TLE・雲量予報）", license: "Public / CC BY 4.0" },
+  { name: "CDS Aladin / DSS2 / 2MASS (HiPS)", desc: "全天実写サーベイタイル（DSS2 / 2MASS・オンデマンド/事前キャッシュ）", license: "Public Scientific Data" },
   { name: "Tauri v2 / Rust / React / Three.js", desc: "アプリ基盤・自動更新・VSOP87・SGP4・SQLite・rustls", license: "MIT / Apache-2.0" },
 ];
 
@@ -46,6 +71,15 @@ export function SettingsPanel() {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [profileText, setProfileText] = useState("");
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [cacheStats, setCacheStats] = useState<OfflineCacheStats | null>(null);
+  const [snapshots, setSnapshots] = useState<OfflineSnapshotMeta[]>([]);
+  const [expandedSnap, setExpandedSnap] = useState<OfflineObservationSnapshot | null>(null);
+  const [snapTitle, setSnapTitle] = useState("");
+  const [snapNote, setSnapNote] = useState("");
+  const [packProgress, setPackProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+
+  const hipsConfig = useSkyStore((s) => s.hipsConfig);
+  const centerOnSkyCoords = useSkyStore((s) => s.centerOnSkyCoords);
 
   const showObservationOnStartup = useSkyStore((s) => s.showObservationOnStartup);
   const startupDemo = useSkyStore((s) => s.startupDemo);
@@ -88,6 +122,25 @@ export function SettingsPanel() {
   useEffect(() => {
     void useUpdaterStore.getState().initVersion();
   }, []);
+
+  const refreshOfflineOverview = async () => {
+    try {
+      const [stats, snaps] = await Promise.all([
+        getOfflineCacheStats(),
+        listOfflineSnapshots(),
+      ]);
+      setCacheStats(stats);
+      setSnapshots(snaps);
+    } catch {
+      // Ignore stats error
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "offline") {
+      void refreshOfflineOverview();
+    }
+  }, [tab]);
 
   const currentDefaultLocId =
     locationsList.find((l) => l.is_default)?.id ?? location.id;
@@ -158,7 +211,7 @@ export function SettingsPanel() {
       </div>
 
       {/* Tabs */}
-      <div className="grid grid-cols-3 gap-1 border-b border-[var(--border-subtle)] bg-white/[0.03] p-1.5 text-[11px]">
+      <div className="grid grid-cols-4 gap-1 border-b border-[var(--border-subtle)] bg-white/[0.03] p-1.5 text-[10.5px]">
         <button
           type="button"
           onClick={() => setTab("general")}
@@ -168,8 +221,20 @@ export function SettingsPanel() {
               : "text-[var(--text-secondary)] hover:bg-white/10"
           }`}
         >
-          <Sliders className="h-3.5 w-3.5" />
-          <span>一般・単位</span>
+          <Sliders className="h-3 w-3" />
+          <span>一般</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("offline")}
+          className={`flex items-center justify-center gap-1 rounded-full py-1.5 font-medium transition-colors ${
+            tab === "offline"
+              ? "m3-tonal-active"
+              : "text-[var(--text-secondary)] hover:bg-white/10"
+          }`}
+        >
+          <HardDrive className="h-3 w-3" />
+          <span>オフライン</span>
         </button>
         <button
           type="button"
@@ -180,8 +245,8 @@ export function SettingsPanel() {
               : "text-[var(--text-secondary)] hover:bg-white/10"
           }`}
         >
-          <FileJson className="h-3.5 w-3.5" />
-          <span>プロファイル</span>
+          <FileJson className="h-3 w-3" />
+          <span>設定移行</span>
         </button>
         <button
           type="button"
@@ -192,7 +257,7 @@ export function SettingsPanel() {
               : "text-[var(--text-secondary)] hover:bg-white/10"
           }`}
         >
-          <ShieldCheck className="h-3.5 w-3.5" />
+          <ShieldCheck className="h-3 w-3" />
           <span>ライセンス</span>
         </button>
       </div>
@@ -449,6 +514,349 @@ export function SettingsPanel() {
               )}
             </section>
           </>
+        )}
+
+        {tab === "offline" && (
+          <div className="space-y-3">
+            {/* Local Image Cache & Pre-download Packs */}
+            <section className="space-y-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]/80 p-2.5">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-semibold text-[var(--text-secondary)]">
+                  <Database className="h-3.5 w-3.5 text-sky-400" />
+                  画像ローカルキャッシュ (HiPS / 天体実写)
+                </span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6"
+                  title="容量を更新"
+                  onClick={() => void refreshOfflineOverview()}
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </Button>
+              </div>
+
+              {cacheStats && (
+                <div className="grid grid-cols-3 gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-black/25 p-2 text-[10px]">
+                  <div>
+                    <div className="text-[var(--text-muted)]">HiPS タイル</div>
+                    <div className="font-mono-num font-semibold">
+                      {cacheStats.hips_tile_count}枚 ({formatBytesCompact(cacheStats.hips_bytes)})
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[var(--text-muted)]">天体写真</div>
+                    <div className="font-mono-num font-semibold">
+                      {cacheStats.photo_count}枚 ({formatBytesCompact(cacheStats.photo_bytes)})
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[var(--text-muted)]">合計使用量</div>
+                    <div className="font-mono-num font-semibold text-[var(--accent-primary)]">
+                      {formatBytesCompact(cacheStats.total_bytes)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {offlineMode && (
+                <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[10.5px] text-amber-200">
+                  完全オフラインモードが ON のため新規ダウンロードは停止中です（保存済みタイル・写真・位置データはそのまま利用できます）。
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 w-full gap-1.5 text-[11px]"
+                  disabled={offlineMode || packProgress !== null}
+                  onClick={async () => {
+                    setPackProgress({ done: 0, total: 252, label: "全天ベースマップを保存中" });
+                    try {
+                      const res = await prefetchAllSkyHipsPack(
+                        hipsConfig.surveyId,
+                        offlineMode,
+                        (done, total) =>
+                          setPackProgress({ done, total, label: "全天ベースマップを保存中" }),
+                      );
+                      setFeedback({
+                        ok: true,
+                        text: `全天パック保存完了 (${hipsConfig.surveyId}): 新規 ${res.downloaded} 枚 (${formatBytesCompact(res.bytes_added)}) / 既存 ${res.already_cached} 枚`,
+                      });
+                      await refreshOfflineOverview();
+                    } catch (err) {
+                      setFeedback({
+                        ok: false,
+                        text: err instanceof Error ? err.message : String(err),
+                      });
+                    } finally {
+                      setPackProgress(null);
+                    }
+                  }}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>全天ベースマップを事前保存 ({hipsConfig.surveyId} / 252枚)</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-full gap-1.5 text-[11px]"
+                  disabled={offlineMode || packProgress !== null}
+                  onClick={async () => {
+                    setPackProgress({ done: 0, total: 180, label: "現在視野周辺を保存中" });
+                    try {
+                      const res = await prefetchCurrentViewHips(
+                        hipsConfig.surveyId,
+                        offlineMode,
+                        (done, total) =>
+                          setPackProgress({ done, total, label: "現在視野周辺を保存中" }),
+                      );
+                      setFeedback({
+                        ok: true,
+                        text: `現在視野保存完了: 新規 ${res.downloaded} 枚 (${formatBytesCompact(res.bytes_added)}) / 既存 ${res.already_cached} 枚`,
+                      });
+                      await refreshOfflineOverview();
+                    } catch (err) {
+                      setFeedback({
+                        ok: false,
+                        text: err instanceof Error ? err.message : String(err),
+                      });
+                    } finally {
+                      setPackProgress(null);
+                    }
+                  }}
+                >
+                  <Download className="h-3 w-3" />
+                  <span>現在の視野周辺を高精細保存 (Order 2–5)</span>
+                </Button>
+              </div>
+
+              {packProgress && (
+                <div className="space-y-1">
+                  <div className="flex justify-between font-mono-num text-[10px] text-[var(--accent-primary)]">
+                    <span>{packProgress.label}...</span>
+                    <span>
+                      {packProgress.done}/{packProgress.total}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full bg-[var(--accent-primary)] transition-all"
+                      style={{
+                        width: `${Math.min(100, Math.round((packProgress.done / Math.max(1, packProgress.total)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1 text-[10px] text-rose-300"
+                  onClick={async () => {
+                    const stats = await clearOfflineCacheTarget("hips");
+                    setCacheStats(stats);
+                    setFeedback({ ok: true, text: "HiPS 画像タイルキャッシュを削除しました。" });
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>HiPS タイル削除</span>
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1 text-[10px] text-rose-300"
+                  onClick={async () => {
+                    const stats = await clearOfflineCacheTarget("photos");
+                    setCacheStats(stats);
+                    setFeedback({ ok: true, text: "天体実写キャッシュを削除しました。" });
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>天体写真削除</span>
+                </Button>
+              </div>
+            </section>
+
+            {/* Saved Celestial Positions & Observation Snapshots */}
+            <section className="space-y-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]/80 p-2.5">
+              <div className="font-semibold text-[var(--text-secondary)]">
+                天体位置・観測状態のローカル保存（スナップショット）
+              </div>
+              <p className="text-[10px] leading-relaxed text-[var(--text-muted)]">
+                現在の観測地・時刻・太陽系天体/衛星の位置・視野方向をローカル保存し、圏外でも後から復元・確認できます。
+              </p>
+
+              <input
+                type="text"
+                value={snapTitle}
+                onChange={(e) => setSnapTitle(e.target.value)}
+                placeholder={`${location.name_ja} 観測記録`}
+                className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-[11px] outline-none focus:border-[var(--accent-primary)]"
+              />
+              <input
+                type="text"
+                value={snapNote}
+                onChange={(e) => setSnapNote(e.target.value)}
+                placeholder="メモ（任意: 機材、見どころなど）"
+                className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-[11px] outline-none focus:border-[var(--accent-primary)]"
+              />
+
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 w-full gap-1.5 text-[11px]"
+                onClick={async () => {
+                  try {
+                    const snap = buildCurrentObservationSnapshot(snapTitle, snapNote);
+                    const meta = await saveOfflineSnapshot(snap);
+                    setSnapTitle("");
+                    setSnapNote("");
+                    setExpandedSnap(snap);
+                    await refreshOfflineOverview();
+                    setFeedback({
+                      ok: true,
+                      text: `観測スナップショット「${meta.title}」(${meta.body_count}天体) を保存しました。`,
+                    });
+                  } catch (err) {
+                    setFeedback({
+                      ok: false,
+                      text: err instanceof Error ? err.message : String(err),
+                    });
+                  }
+                }}
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>現在の空・天体位置をローカル保存</span>
+              </Button>
+
+              <div className="space-y-1.5 pt-1">
+                {snapshots.length === 0 ? (
+                  <div className="py-2 text-center text-[10.5px] text-[var(--text-muted)]">
+                    保存済みの観測スナップショットはまだありません
+                  </div>
+                ) : (
+                  snapshots.map((item) => {
+                    const isExpanded = expandedSnap?.id === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        className="space-y-1.5 rounded-lg border border-[var(--border-subtle)] bg-black/20 p-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold text-[11px]">{item.title}</div>
+                            <div className="truncate font-mono-num text-[9.5px] text-[var(--text-muted)]">
+                              {item.location_name} ・ {item.created_at_iso.slice(0, 16).replace("T", " ")} ・ {item.body_count}天体
+                            </div>
+                            {item.note && (
+                              <div className="truncate text-[10px] text-[var(--text-secondary)]">
+                                {item.note}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[10px]"
+                            onClick={async () => {
+                              const full = await loadOfflineSnapshot(item.id);
+                              restoreOfflineSnapshotToStore(full);
+                              setFeedback({
+                                ok: true,
+                                text: `「${item.title}」の観測日時・観測地・視野を復元しました。`,
+                              });
+                            }}
+                          >
+                            時刻・視野を復元
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[10px]"
+                            onClick={async () => {
+                              if (isExpanded) {
+                                setExpandedSnap(null);
+                              } else {
+                                const full = await loadOfflineSnapshot(item.id);
+                                setExpandedSnap(full);
+                              }
+                            }}
+                          >
+                            {isExpanded ? "座標を閉じる" : "保存座標一覧"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[10px] text-rose-300"
+                            onClick={async () => {
+                              await deleteOfflineSnapshot(item.id);
+                              if (isExpanded) setExpandedSnap(null);
+                              await refreshOfflineOverview();
+                            }}
+                          >
+                            削除
+                          </Button>
+                        </div>
+
+                        {isExpanded && expandedSnap && (
+                          <div className="max-h-48 space-y-1 overflow-y-auto border-t border-[var(--border-subtle)] pt-1.5 text-[10px]">
+                            {expandedSnap.bodies.slice(0, 30).map((b) => (
+                              <div
+                                key={`${b.kind}-${b.id}`}
+                                className="flex items-center justify-between gap-2 rounded bg-[var(--bg-surface)]/65 px-2 py-1"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate font-medium">
+                                    {b.name_ja}{" "}
+                                    {b.mag !== null && (
+                                      <span className="font-mono-num text-[9.5px] text-[var(--text-muted)]">
+                                        ({b.mag.toFixed(1)}等)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="truncate font-mono-num text-[9px] text-[var(--text-muted)]">
+                                    RA {b.ra_deg.toFixed(2)}° Dec {b.dec_deg.toFixed(2)}° / Az {b.az_deg.toFixed(0)}° Alt{" "}
+                                    {b.alt_deg.toFixed(0)}°
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 shrink-0 gap-1 px-1.5 text-[9.5px]"
+                                  onClick={() =>
+                                    centerOnSkyCoords(b.ra_deg, b.dec_deg, b.az_deg, b.alt_deg)
+                                  }
+                                >
+                                  <Compass className="h-3 w-3" />
+                                  向ける
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          </div>
         )}
 
         {tab === "profile" && (

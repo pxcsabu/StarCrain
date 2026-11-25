@@ -1,6 +1,7 @@
-import { Image as ImageIcon, Palette, SlidersHorizontal, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { HardDriveDownload, Image as ImageIcon, Palette, SlidersHorizontal, Sparkles, Telescope, Trash2, Upload, X } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { prefetchCurrentViewHips } from "@/lib/offlineSnapshots";
 import {
   clearCustomPanoramaStorage,
   hasLoadedCustomPanorama,
@@ -14,6 +15,7 @@ import {
   type ConstellationLineMode,
   type CustomColorPalette,
   type CustomPanoramaMaskMode,
+  type HipsSurveyId,
   type LandscapePresetId,
   OBSERVER_BODIES,
   OTHER_STAR_PRESETS,
@@ -53,6 +55,7 @@ const LAYER_TOGGLES: {
   { key: "dsoNames", label: "星雲・星団名" },
   { key: "meteorRadiants", label: "流星群放射点" },
   { key: "zoomTextures", label: "拡大天体テクスチャ" },
+  { key: "lunarLabels", label: "月面クレーター・海名" },
   { key: "ecliptic", label: "黄道" },
   { key: "celestialEquator", label: "天の赤道" },
   { key: "equatorialGrid", label: "赤経・赤緯線" },
@@ -90,6 +93,8 @@ export function DisplaySettings() {
   const customColors = useSkyStore((s) => s.customColors);
   const showObservationOnStartup = useSkyStore((s) => s.showObservationOnStartup);
   const landscapeConfig = useSkyStore((s) => s.landscapeConfig);
+  const hipsConfig = useSkyStore((s) => s.hipsConfig);
+  const offlineMode = useSkyStore((s) => s.offlineMode);
   const meteorAnimationEnabled = useSkyStore((s) => s.meteorAnimationEnabled);
   const meteorRateMultiplier = useSkyStore((s) => s.meteorRateMultiplier);
 
@@ -109,6 +114,8 @@ export function DisplaySettings() {
   const setShowObservationOnStartup = useSkyStore((s) => s.setShowObservationOnStartup);
   const setLandscapeConfig = useSkyStore((s) => s.setLandscapeConfig);
   const bumpLandscapeVersion = useSkyStore((s) => s.bumpLandscapeVersion);
+  const setHipsConfig = useSkyStore((s) => s.setHipsConfig);
+  const toggleHipsEnabled = useSkyStore((s) => s.toggleHipsEnabled);
   const setMeteorAnimationEnabled = useSkyStore((s) => s.setMeteorAnimationEnabled);
   const setMeteorRateMultiplier = useSkyStore((s) => s.setMeteorRateMultiplier);
   const jumpToYmdHms = useSkyStore((s) => s.jumpToYmdHms);
@@ -116,6 +123,8 @@ export function DisplaySettings() {
 
   const [hipInput, setHipInput] = useState(String(originStarHip));
   const [panoMessage, setPanoMessage] = useState<string | null>(null);
+  const [hipsCaching, setHipsCaching] = useState(false);
+  const [hipsStatus, setHipsStatus] = useState<string | null>(null);
   const panoInputRef = useRef<HTMLInputElement>(null);
   const effFov = effectiveFovDeg(projectionMode, fovDeg) / zoom;
   const bortle = skyFrame?.sky_palette.estimated_bortle ?? 4;
@@ -411,6 +420,127 @@ export function DisplaySettings() {
               </label>
             ))}
           </div>
+        </section>
+
+        {/* All-Sky Photographic Survey (HiPS / DSS2) */}
+        <section className="space-y-2 border-t border-[var(--border-subtle)] pt-3">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 font-semibold text-[var(--text-secondary)]">
+              <Telescope className="h-3.5 w-3.5 text-sky-400" />
+              全天実写サーベイ (HiPS / DSS2)
+            </span>
+            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium">
+              <input
+                type="checkbox"
+                checked={hipsConfig.enabled}
+                onChange={toggleHipsEnabled}
+              />
+              <span>{hipsConfig.enabled ? "ON" : "OFF"}</span>
+            </label>
+          </div>
+
+          <p className="text-[10px] leading-relaxed text-[var(--text-muted)]">
+            ズームに応じて全天写真タイルをシームレスに自動高精細化します（表示タイルは自動キャッシュ）。
+          </p>
+
+          <div className="grid grid-cols-3 gap-1">
+            {(
+              [
+                { id: "dss2_color", label: "DSS2 カラー" },
+                { id: "dss2_red", label: "DSS2 高精細" },
+                { id: "2mass_color", label: "2MASS 赤外" },
+              ] as { id: HipsSurveyId; label: string }[]
+            ).map((sv) => (
+              <Button
+                key={sv.id}
+                type="button"
+                size="sm"
+                variant={hipsConfig.surveyId === sv.id ? "default" : "outline"}
+                className="h-7 px-1 text-[10.5px]"
+                onClick={() => setHipsConfig({ surveyId: sv.id, enabled: true })}
+              >
+                {sv.label}
+              </Button>
+            ))}
+          </div>
+
+          <div className="space-y-1 text-[11px]">
+            <div className="flex justify-between text-[10px] text-[var(--text-muted)]">
+              <span>実写不透明度</span>
+              <span className="font-mono-num">{Math.round(hipsConfig.opacity * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0.2}
+              max={1.0}
+              step={0.05}
+              value={hipsConfig.opacity}
+              onChange={(e) => setHipsConfig({ opacity: Number(e.target.value) })}
+              className="w-full accent-[var(--accent-primary)]"
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-1">
+            {[
+              { ord: 5, label: "標準 (Order 5)" },
+              { ord: 6, label: "高精細 (Order 6)" },
+              { ord: 7, label: "超高精細 (Order 7)" },
+            ].map((o) => (
+              <Button
+                key={o.ord}
+                type="button"
+                size="sm"
+                variant={hipsConfig.maxOrder === o.ord ? "default" : "outline"}
+                className="h-6 px-1 text-[10px]"
+                onClick={() => setHipsConfig({ maxOrder: o.ord })}
+              >
+                {o.label}
+              </Button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={hipsCaching || offlineMode}
+              className="h-7 flex-1 gap-1.5 px-2 text-[10.5px]"
+              onClick={async () => {
+                setHipsCaching(true);
+                setHipsStatus("現在の視野を高精細保存中...");
+                try {
+                  const res = await prefetchCurrentViewHips(
+                    hipsConfig.surveyId,
+                    offlineMode,
+                    (done, total) => setHipsStatus(`保存中 ${done}/${total} 枚...`),
+                  );
+                  setHipsStatus(
+                    `完了: 新規 ${res.downloaded} 枚 / 既存 ${res.already_cached} 枚`,
+                  );
+                } catch (err) {
+                  setHipsStatus(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setHipsCaching(false);
+                }
+              }}
+            >
+              <HardDriveDownload className="h-3.5 w-3.5 text-sky-400" />
+              <span>現在視野をオフライン保存</span>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[10.5px]"
+              onClick={() => setActivePanel("settings")}
+            >
+              パック管理…
+            </Button>
+          </div>
+          {hipsStatus && (
+            <div className="text-[10px] text-[var(--accent-primary)]">{hipsStatus}</div>
+          )}
         </section>
 
         {/* Horizon 360 Panorama Landscape (Gcam Photo Sphere & Presets) */}

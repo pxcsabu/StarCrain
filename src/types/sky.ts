@@ -471,6 +471,7 @@ export interface SkyLayerVisibility {
   dsoNames: boolean;
   meteorRadiants: boolean;
   zoomTextures: boolean;
+  lunarLabels: boolean;
 }
 
 export const DEFAULT_LAYERS: SkyLayerVisibility = {
@@ -493,6 +494,7 @@ export const DEFAULT_LAYERS: SkyLayerVisibility = {
   dsoNames: true,
   meteorRadiants: false,
   zoomTextures: true,
+  lunarLabels: true,
 };
 
 export interface DaySpecialTimes {
@@ -1057,6 +1059,68 @@ export interface GalileanViewData {
   grs_transits: GrsTransitEvent[];
 }
 
+export interface SaturnPhysicalEphemeris {
+  jd_tt: number;
+  ring_tilt_earth_deg: number;
+  ring_tilt_sun_deg: number;
+  north_pole_pa_deg: number;
+  phase_angle_deg: number;
+  apparent_eq_diam_arcsec: number;
+  geo_au: number;
+  ring_outer_rs: number;
+  cassini_rs: number;
+  ring_inner_rs: number;
+}
+
+export interface SaturnMoonPosition {
+  id: string;
+  name_ja: string;
+  roman: string;
+  mag: number;
+  period_days: number;
+  x_rs: number;
+  y_rs: number;
+  z_rs: number;
+  separation_arcsec: number;
+  pa_deg: number;
+  in_transit: boolean;
+  in_occultation: boolean;
+  in_eclipse: boolean;
+  status_ja: string;
+}
+
+export interface SaturnWaveSample {
+  jd_ut: number;
+  time_label: string;
+  mimas_x: number;
+  enceladus_x: number;
+  tethys_x: number;
+  dione_x: number;
+  rhea_x: number;
+  titan_x: number;
+  hyperion_x: number;
+  iapetus_x: number;
+}
+
+export interface TitanElongationEvent {
+  jd_ut: number;
+  time_str: string;
+  direction_ja: string;
+  is_east: boolean;
+  x_rs: number;
+  sep_arcsec: number;
+  saturn_alt_deg: number;
+  observable: boolean;
+}
+
+export interface SaturnMoonsViewData {
+  jd_ut: number;
+  physical: SaturnPhysicalEphemeris;
+  moons: SaturnMoonPosition[];
+  wave_samples: SaturnWaveSample[];
+  titan_elongations: TitanElongationEvent[];
+}
+
 export interface SolarSystem3DBody {
   id: string;
   kind: "star" | "planet" | "moon" | "dwarf_planet" | "comet";
@@ -1456,6 +1520,102 @@ export interface AltitudeTargetItem {
   raDeg: number;
   decDeg: number;
   color: string;
+}
+
+export type HipsSurveyId = "dss2_color" | "dss2_red" | "2mass_color";
+
+export interface HipsSurveyConfig {
+  enabled: boolean;
+  surveyId: HipsSurveyId;
+  opacity: number;
+  maxOrder: number;
+}
+
+export const DEFAULT_HIPS_CONFIG: HipsSurveyConfig = {
+  enabled: false,
+  surveyId: "dss2_color",
+  opacity: 0.78,
+  maxOrder: 6,
+};
+
+export interface SurveyCacheStat {
+  survey_id: string;
+  tile_count: number;
+  bytes: number;
+}
+
+export interface OfflineCacheStats {
+  hips_tile_count: number;
+  hips_bytes: number;
+  photo_count: number;
+  photo_bytes: number;
+  snapshot_count: number;
+  snapshot_bytes: number;
+  total_bytes: number;
+  surveys: SurveyCacheStat[];
+}
+
+export interface PrefetchHipsResult {
+  survey_id: string;
+  requested: number;
+  already_cached: number;
+  downloaded: number;
+  failed: number;
+  bytes_added: number;
+}
+
+export interface SnapshotBodyEntry {
+  id: string;
+  kind: string;
+  name_ja: string;
+  name_en: string;
+  ra_deg: number;
+  dec_deg: number;
+  az_deg: number;
+  alt_deg: number;
+  mag: number | null;
+  extra: string;
+}
+
+export interface SnapshotBookmark {
+  id: string;
+  kind: string;
+  name_ja: string;
+  ra_deg: number;
+  dec_deg: number;
+  mag: number | null;
+  note: string;
+}
+
+export interface OfflineObservationSnapshot {
+  id: string;
+  title: string;
+  created_at_iso: string;
+  note: string;
+  jd_ut: number;
+  location: LocationPreset;
+  view: {
+    projectionMode: ProjectionMode;
+    centerAzDeg: number;
+    centerAltDeg: number;
+    centerRaDeg: number;
+    centerDecDeg: number;
+    fovDeg: number;
+    zoom: number;
+  };
+  bodies: SnapshotBodyEntry[];
+  bookmarks: SnapshotBookmark[];
+}
+
+export interface OfflineSnapshotMeta {
+  id: string;
+  title: string;
+  created_at_iso: string;
+  note: string;
+  jd_ut: number;
+  location_name: string;
+  body_count: number;
+  bookmark_count: number;
 }
 
 

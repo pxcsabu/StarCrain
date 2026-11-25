@@ -1,3 +1,5 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Maximize2, Minimize2, X, ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { resolveCelestialPhoto } from "@/lib/celestialPhotos";
 import { useSkyStore } from "@/store/skyStore";
@@ -72,26 +74,78 @@ export function CelestialVisualSvg({
     [kind, id, title, objType, raDeg, decDeg, majAxArcmin],
   );
 
-  const initialStage =
-    photo.isSurveyRemote && offlineMode ? ("fallback" as const) : ("primary" as const);
-  const [stage, setStage] = useState<"primary" | "fallback" | "svg">(initialStage);
+  const [stage, setStage] = useState<"primary" | "fallback" | "svg">(
+    photo.isSurveyRemote && offlineMode && !isTauri() ? "fallback" : "primary",
+  );
+  const [cachedRemoteUrl, setCachedRemoteUrl] = useState<string | null>(null);
+  const [fitMode, setFitMode] = useState<"contain" | "cover">("contain");
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
-    setStage(photo.isSurveyRemote && offlineMode ? "fallback" : "primary");
-  }, [photo.primarySrc, photo.isSurveyRemote, offlineMode]);
+    setFitMode("contain");
+    setLightboxOpen(false);
+    setCachedRemoteUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+
+    if (!photo.isSurveyRemote) {
+      setStage("primary");
+      return;
+    }
+
+    if (!isTauri()) {
+      setStage(offlineMode ? "fallback" : "primary");
+      return;
+    }
+
+    // In Tauri: check disk cache even when offlineMode is true
+    let cancelled = false;
+    setStage("primary");
+    if (photo.cacheKey) {
+      void invoke<ArrayBuffer>("fetch_cached_object_photo_cmd", {
+        cacheKey: photo.cacheKey,
+        url: photo.primarySrc,
+        offlineMode,
+      })
+        .then((buf) => {
+          if (cancelled) return;
+          const url = URL.createObjectURL(new Blob([buf], { type: "image/jpeg" }));
+          setCachedRemoteUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+          setStage("primary");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setStage((s) => (s === "primary" ? "fallback" : s));
+        });
+    } else {
+      setStage(offlineMode ? "fallback" : "primary");
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [photo.primarySrc, photo.isSurveyRemote, photo.cacheKey, offlineMode]);
+
+  useEffect(() => {
+    return () => {
+      if (cachedRemoteUrl) {
+        URL.revokeObjectURL(cachedRemoteUrl);
+      }
+    };
+  }, [cachedRemoteUrl]);
 
   const activePhotoSrc =
     stage === "primary"
-      ? photo.primarySrc
+      ? photo.isSurveyRemote && isTauri()
+        ? cachedRemoteUrl
+        : photo.primarySrc
       : stage === "fallback"
         ? photo.fallbackSrc
         : null;
-
-  const isWholeDiskBody =
-    kind === "sun" ||
-    kind === "moon" ||
-    kind === "planet" ||
-    kind === "dwarf_planet";
 
   const uid = `${kind}-${id}`.replace(/[^a-zA-Z0-9_-]/g, "_");
   const lowerType = objType.toLowerCase();
@@ -143,32 +197,38 @@ export function CelestialVisualSvg({
   const tiltDeg = ((posAngDeg ?? 35) % 180) - 90;
 
   return (
-    <div
-      className={`relative overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[#03050d] ${
-        size === "lg" ? "h-44 w-full" : "h-24 w-full"
-      }`}
-    >
-      {activePhotoSrc ? (
-        <img
-          src={activePhotoSrc}
-          alt={`${title} 実写写真`}
-          loading="lazy"
-          onError={() => {
-            if (stage === "primary" && photo.fallbackSrc !== photo.primarySrc) {
-              setStage("fallback");
-            } else {
-              setStage("svg");
-            }
-          }}
-          className={`h-full w-full transition-opacity duration-200 ${
-            isWholeDiskBody ? "bg-black object-contain" : "object-cover"
-          } ${
-            nightVision
-              ? "brightness-75 contrast-125 grayscale sepia hue-rotate-[-50deg] saturate-[5]"
-              : ""
-          }`}
-        />
-      ) : (
+    <>
+      <div
+        className={`relative overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[#02040a] ${
+          size === "lg" ? "h-52 w-full" : "h-28 w-full"
+        }`}
+      >
+        {activePhotoSrc ? (
+          <img
+            src={activePhotoSrc}
+            alt={`${title} 実写写真`}
+            loading="lazy"
+            onClick={() => {
+              if (size === "lg") setLightboxOpen(true);
+            }}
+            onError={() => {
+              if (stage === "primary" && photo.fallbackSrc !== photo.primarySrc) {
+                setStage("fallback");
+              } else {
+                setStage("svg");
+              }
+            }}
+            className={`h-full w-full transition-opacity duration-200 ${
+              size === "lg" ? "cursor-zoom-in" : ""
+            } ${
+              fitMode === "cover" ? "object-cover" : "bg-[#02040a] object-contain"
+            } ${
+              nightVision
+                ? "brightness-75 contrast-125 grayscale sepia hue-rotate-[-50deg] saturate-[5]"
+                : ""
+            }`}
+          />
+        ) : (
         <svg
           viewBox="0 0 240 120"
           className="h-full w-full"
@@ -461,6 +521,38 @@ export function CelestialVisualSvg({
       </svg>
       )}
 
+      {/* Top-right image fit / full-preview controls */}
+      {activePhotoSrc && size === "lg" && (
+        <div className="absolute right-2 top-2 flex items-center gap-1">
+          <button
+            type="button"
+            title={fitMode === "contain" ? "枠いっぱいに拡大表示" : "全体を表示 (見切れなし)"}
+            onClick={() => setFitMode((m) => (m === "contain" ? "cover" : "contain"))}
+            className="flex items-center gap-1 rounded-md border border-white/15 bg-black/65 px-1.5 py-0.5 text-[9.5px] text-slate-200 backdrop-blur-sm hover:border-white/35"
+          >
+            {fitMode === "contain" ? (
+              <>
+                <Maximize2 className="h-2.5 w-2.5" />
+                <span>拡大</span>
+              </>
+            ) : (
+              <>
+                <Minimize2 className="h-2.5 w-2.5" />
+                <span>全体</span>
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            title="原寸プレビューを開く"
+            onClick={() => setLightboxOpen(true)}
+            className="flex items-center justify-center rounded-md border border-white/15 bg-black/65 p-1 text-slate-200 backdrop-blur-sm hover:border-white/35"
+          >
+            <ZoomIn className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
       {/* Bottom vignette & corner telemetry */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-black/75 via-black/35 to-transparent" />
       <div className="pointer-events-none absolute inset-x-2 bottom-1.5 flex items-center justify-between gap-1 text-[10px] text-slate-200/95">
@@ -478,5 +570,40 @@ export function CelestialVisualSvg({
         )}
       </div>
     </div>
+
+    {lightboxOpen && activePhotoSrc && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+        onClick={() => setLightboxOpen(false)}
+      >
+        <div
+          className="relative flex max-h-[90vh] max-w-[92vw] flex-col items-center gap-2 rounded-2xl border border-white/15 bg-[#050814] p-3 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex w-full items-center justify-between gap-4 px-1 text-xs text-slate-200">
+            <span className="truncate font-semibold">{title}</span>
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(false)}
+              className="rounded-lg p-1 text-slate-400 hover:bg-white/10 hover:text-white"
+              aria-label="プレビューを閉じる"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <img
+            src={activePhotoSrc}
+            alt={`${title} 実写拡大`}
+            className={`max-h-[78vh] max-w-[86vw] rounded-lg bg-[#02040a] object-contain ${
+              nightVision
+                ? "brightness-75 contrast-125 grayscale sepia hue-rotate-[-50deg] saturate-[5]"
+                : ""
+            }`}
+          />
+          <div className="text-[11px] text-slate-400">{photo.credit}</div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

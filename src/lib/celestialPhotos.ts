@@ -3,6 +3,7 @@ export interface ResolvedCelestialPhoto {
   fallbackSrc: string;
   credit: string;
   isSurveyRemote: boolean;
+  cacheKey: string | null;
 }
 
 const BUNDLED_PHOTOS: Record<string, { file: string; credit: string }> = {
@@ -125,6 +126,7 @@ export function resolveCelestialPhoto(opts: {
       fallbackSrc,
       credit: exact.credit,
       isSurveyRemote: false,
+      cacheKey: null,
     };
   }
 
@@ -134,6 +136,7 @@ export function resolveCelestialPhoto(opts: {
       fallbackSrc,
       credit: BUNDLED_PHOTOS.comet.credit,
       isSurveyRemote: false,
+      cacheKey: null,
     };
   }
 
@@ -149,11 +152,19 @@ export function resolveCelestialPhoto(opts: {
         ? 0.35
         : 0.55;
     const surveyUrl = `https://skyview.gsfc.nasa.gov/current/cgi/runquery.pl?Position=${opts.raDeg.toFixed(4)},${opts.decDeg.toFixed(4)}&Survey=DSS2+Red&Pixels=360&Size=${fovDeg.toFixed(3)}&Return=JPEG`;
+    const cleanKindId = `${opts.kind}_${opts.id}`
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .slice(0, 44);
+    const cacheKey = `sv_${cleanKindId}_${opts.raDeg.toFixed(2)}_${opts.decDeg.toFixed(2)}_${fovDeg.toFixed(2)}`.replace(
+      /[^a-zA-Z0-9_-]/g,
+      "_",
+    );
     return {
       primarySrc: surveyUrl,
       fallbackSrc,
       credit: "NASA SkyView DSS2 実写 / 参考天体写真",
       isSurveyRemote: true,
+      cacheKey,
     };
   }
 
@@ -162,5 +173,6 @@ export function resolveCelestialPhoto(opts: {
     fallbackSrc,
     credit: fallbackRec.credit,
     isSurveyRemote: false,
+    cacheKey: null,
   };
 }

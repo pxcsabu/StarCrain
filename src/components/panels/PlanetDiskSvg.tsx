@@ -1,3 +1,4 @@
+import { LUNAR_FEATURES, projectLunarFeature } from "@/lib/lunarFeatures";
 import type { GalileanMoonPosition, JupiterPhysicalEphemeris } from "@/types/sky";
 
 interface PlanetDiskSvgProps {
@@ -10,6 +11,7 @@ interface PlanetDiskSvgProps {
   ringTiltDeg?: number | null;
   jupiterPhys?: JupiterPhysicalEphemeris | null;
   galileanMoons?: GalileanMoonPosition[];
+  showLunarLabels?: boolean;
   waxing?: boolean;
   size?: number;
   simple?: boolean;
@@ -45,6 +47,7 @@ export function PlanetDiskSvg({
   ringTiltDeg = null,
   jupiterPhys = null,
   galileanMoons = [],
+  showLunarLabels = false,
   waxing = true,
   size = 210,
   simple = false,
@@ -322,14 +325,62 @@ export function PlanetDiskSvg({
             </g>
           )}
 
-          {/* Subtle lunar craters */}
+          {/* Subtle lunar maria shading & optional selenographic labels */}
           {normId === "moon" && (
-            <g clipPath={`url(#${clipId})`} opacity="0.24" fill="#475569">
-              <circle cx={cx - 14} cy={cy - 12} r="10" />
-              <circle cx={cx + 12} cy={cy - 8} r="13" />
-              <circle cx={cx - 4} cy={cy + 16} r="8" />
-              <circle cx={cx + 16} cy={cy + 14} r="6" />
-            </g>
+            <>
+              <g clipPath={`url(#${clipId})`} opacity="0.24" fill="#475569">
+                <circle cx={cx - 18} cy={cy - 10} r="13" />
+                <circle cx={cx + 12} cy={cy - 12} r="11" />
+                <circle cx={cx + 22} cy={cy + 6} r="9" />
+                <circle cx={cx - 8} cy={cy + 16} r="8" />
+                <ellipse cx={cx + 34} cy={cy - 11} rx="5" ry="4" />
+              </g>
+              {showLunarLabels &&
+                LUNAR_FEATURES.filter((f) => f.rank === 1).map((feat, idx) => {
+                  const p = projectLunarFeature(
+                    feat,
+                    cx,
+                    cy,
+                    r,
+                    (northArrowRot * Math.PI) / 180,
+                  );
+                  if (!p.isVisibleLimb) return null;
+                  const col =
+                    feat.kind === "mare"
+                      ? "#cbd5e1"
+                      : feat.kind === "mountain"
+                        ? "#7dd3fc"
+                        : "#fde047";
+                  const dyLabel = idx % 2 === 0 ? -5.5 : 7.5;
+                  return (
+                    <g key={feat.id} className="pointer-events-none">
+                      {feat.kind !== "mare" && (
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r="1.7"
+                          fill={col}
+                          stroke="#040712"
+                          strokeWidth="0.6"
+                        />
+                      )}
+                      <text
+                        x={p.x}
+                        y={feat.kind === "mare" ? p.y : p.y + dyLabel}
+                        textAnchor="middle"
+                        fontSize="6.4"
+                        fontWeight="600"
+                        fill={col}
+                        stroke="#02040a"
+                        strokeWidth="2.1"
+                        paintOrder="stroke"
+                      >
+                        {feat.nameJa}
+                      </text>
+                    </g>
+                  );
+                })}
+            </>
           )}
         </g>
       )}

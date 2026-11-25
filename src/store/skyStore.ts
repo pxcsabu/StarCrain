@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { create } from "zustand";
+import { clearHipsFailureCache } from "@/lib/hipsSurvey";
 import { defaultFovPresets } from "@/lib/fovMath";
 import {
   buildGpsLocationPreset,
@@ -24,9 +25,11 @@ import {
   type ConstellationLineMode,
   type CustomColorPalette,
   type DaySpecialTimes,
+  DEFAULT_HIPS_CONFIG,
   DEFAULT_LANDSCAPE_CONFIG,
   DEFAULT_LAYERS,
   type FovPreset,
+  type HipsSurveyConfig,
   type LandscapeConfig,
   type LocationPreset,
   type ObjectDetails,
@@ -73,6 +76,40 @@ const FOV_STORAGE_KEY = "starcrane-fov-v1";
 const OFFLINE_STORAGE_KEY = "starcrane-offline-v1";
 const LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v1";
 const METEOR_ANIM_STORAGE_KEY = "starcrane:meteors_on:v1";
+const HIPS_STORAGE_KEY = "starcrane-hips-v1";
+
+function loadHipsConfig(): HipsSurveyConfig {
+  if (typeof window === "undefined") return { ...DEFAULT_HIPS_CONFIG };
+  try {
+    const raw = window.localStorage.getItem(HIPS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_HIPS_CONFIG };
+    const p = JSON.parse(raw) as Partial<HipsSurveyConfig>;
+    const surveyId =
+      p.surveyId === "dss2_color" || p.surveyId === "dss2_red" || p.surveyId === "2mass_color"
+        ? p.surveyId
+        : DEFAULT_HIPS_CONFIG.surveyId;
+    return {
+      enabled: typeof p.enabled === "boolean" ? p.enabled : DEFAULT_HIPS_CONFIG.enabled,
+      surveyId,
+      opacity:
+        typeof p.opacity === "number" && Number.isFinite(p.opacity)
+          ? Math.max(0.15, Math.min(1, p.opacity))
+          : DEFAULT_HIPS_CONFIG.opacity,
+      maxOrder:
+        typeof p.maxOrder === "number" && Number.isFinite(p.maxOrder)
+          ? Math.max(2, Math.min(7, Math.round(p.maxOrder)))
+          : DEFAULT_HIPS_CONFIG.maxOrder,
+    };
+  } catch {
+    return { ...DEFAULT_HIPS_CONFIG };
+  }
+}
+
+function persistHipsConfig(cfg: HipsSurveyConfig): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(HIPS_STORAGE_KEY, JSON.stringify(cfg));
+  }
+}
 
 const ALTITUDE_TARGET_COLORS = [
   "#38bdf8",
@@ -366,6 +403,7 @@ export interface SkyState {
   // Horizon Panorama Landscape & Altitude Graph Planner
   landscapeConfig: LandscapeConfig;
   landscapeVersion: number;
+  hipsConfig: HipsSurveyConfig;
   altitudeTargets: AltitudeTargetItem[];
 
   // Planet Analysis Tracks (Phase 5)
@@ -467,6 +505,8 @@ export interface SkyState {
   setMeteorRateMultiplier: (mult: number) => void;
   setLandscapeConfig: (patch: Partial<LandscapeConfig>) => void;
   bumpLandscapeVersion: () => void;
+  setHipsConfig: (patch: Partial<HipsSurveyConfig>) => void;
+  toggleHipsEnabled: () => void;
   addAltitudeTarget: (item: Omit<AltitudeTargetItem, "color"> & { color?: string }) => void;
   removeAltitudeTarget: (id: string) => void;
   clearAltitudeTargets: () => void;
@@ -572,6 +612,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   meteorRateMultiplier: 1,
   landscapeConfig: loadLandscapeConfig(),
   landscapeVersion: 0,
+  hipsConfig: loadHipsConfig(),
   altitudeTargets: DEFAULT_ALTITUDE_TARGETS,
   planetTracks: {},
   comets: [],
@@ -1414,6 +1455,18 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       return { landscapeConfig: next };
     }),
   bumpLandscapeVersion: () => set((s) => ({ landscapeVersion: s.landscapeVersion + 1 })),
+  setHipsConfig: (patch) =>
+    set((s) => {
+      const next = { ...s.hipsConfig, ...patch };
+      persistHipsConfig(next);
+      return { hipsConfig: next };
+    }),
+  toggleHipsEnabled: () =>
+    set((s) => {
+      const next = { ...s.hipsConfig, enabled: !s.hipsConfig.enabled };
+      persistHipsConfig(next);
+      return { hipsConfig: next };
+    }),
   addAltitudeTarget: (item) =>
     set((s) => {
       if (s.altitudeTargets.some((t) => t.id === item.id)) {
@@ -1541,6 +1594,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
     if (typeof window !== "undefined") {
       window.localStorage.setItem(OFFLINE_STORAGE_KEY, offlineMode ? "1" : "0");
     }
+    clearHipsFailureCache();
     set({ offlineMode });
   },
 
@@ -1756,6 +1810,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       window.localStorage.removeItem(UNITS_STORAGE_KEY);
       window.localStorage.removeItem(OFFLINE_STORAGE_KEY);
       window.localStorage.removeItem(FOV_STORAGE_KEY);
+      window.localStorage.removeItem(HIPS_STORAGE_KEY);
     }
     useThemeStore.getState().setTheme("dark");
     const clk = useClockStore.getState();
@@ -1778,6 +1833,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       colorPreset: defPalette.id,
       customColors: { ...defPalette.colors },
       fovPresets: defFov,
+      hipsConfig: { ...DEFAULT_HIPS_CONFIG },
       autoRunRealtime: false,
     });
     get().resetLocationsToPresets();

@@ -8,6 +8,7 @@ import {
   stepMeteorParticles,
 } from "@/components/canvas/skyRenderer";
 import { enuToAzAlt, startSkyOrientationSensor } from "@/lib/deviceSensors";
+import { onHipsTileLoaded } from "@/lib/hipsSurvey";
 import { initCustomPanoramaFromStorage } from "@/lib/panoramaLandscape";
 import {
   applyStandardRefractionDeg,
@@ -490,6 +491,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
         next.highlightedSatPass !== prev.highlightedSatPass ||
         next.landscapeConfig !== prev.landscapeConfig ||
         next.landscapeVersion !== prev.landscapeVersion ||
+        next.hipsConfig !== prev.hipsConfig ||
+        next.offlineMode !== prev.offlineMode ||
         next.simLockMode !== prev.simLockMode ||
         next.simStepMinutes !== prev.simStepMinutes ||
         next.gyroAzOffsetDeg !== prev.gyroAzOffsetDeg
@@ -508,9 +511,15 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
       needHqRefreshRef.current = true;
     });
 
+    const unsubHips = onHipsTileLoaded(() => {
+      skyDirtyRef.current = true;
+      needHqRefreshRef.current = true;
+    });
+
     return () => {
       unsubSky();
       unsubTheme();
+      unsubHips();
     };
   }, [commitCamToStore]);
 
@@ -875,6 +884,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
               showSatellites: st.showSatellites,
               highlightedSatPass: st.highlightedSatPass,
               landscapeConfig: st.landscapeConfig,
+              hipsConfig: st.hipsConfig,
+              offlineMode: st.offlineMode,
               skipMeteors: false,
               fastInteractive: true,
               onTextureLoaded: () => {
@@ -918,6 +929,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
                 showSatellites: st.showSatellites,
                 highlightedSatPass: st.highlightedSatPass,
                 landscapeConfig: st.landscapeConfig,
+                hipsConfig: st.hipsConfig,
+                offlineMode: st.offlineMode,
                 skipMeteors: true,
                 fastInteractive: false,
                 onTextureLoaded: () => {

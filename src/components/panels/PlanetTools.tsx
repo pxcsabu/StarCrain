@@ -28,6 +28,7 @@ import type {
   PlanetOverviewItem,
   PlanetTrackPoint,
   PlanetaryPhenomenonRow,
+  SaturnMoonsViewData,
 } from "@/types/sky";
 
 type PlanetToolTab =
@@ -37,7 +38,8 @@ type PlanetToolTab =
   | "inner_offset"
   | "magnitude"
   | "phenomena"
-  | "galilean";
+  | "galilean"
+  | "saturn_moons";
 
 const TABS: { id: PlanetToolTab; label: string; icon: typeof Globe }[] = [
   { id: "info", label: "惑星情報", icon: Globe },
@@ -47,6 +49,7 @@ const TABS: { id: PlanetToolTab; label: string; icon: typeof Globe }[] = [
   { id: "magnitude", label: "光度曲線", icon: Activity },
   { id: "phenomena", label: "現象・接近", icon: Search },
   { id: "galilean", label: "ガリレオ衛星", icon: Sparkles },
+  { id: "saturn_moons", label: "土星の衛星", icon: Orbit },
 ];
 
 const PLANET_COLORS: Record<string, string> = {
@@ -128,6 +131,7 @@ export function PlanetTools() {
   // Tab 2: Appearance
   const [appBody, setAppBody] = useState<string>("jupiter");
   const [appOrientation, setAppOrientation] = useState<"equatorial" | "horizontal">("equatorial");
+  const [showMoonLabels, setShowMoonLabels] = useState<boolean>(true);
   const [appearance, setAppearance] = useState<PlanetAppearanceData | null>(null);
   const [grsLon, setGrsLon] = useState<number>(65);
 
@@ -172,6 +176,12 @@ export function PlanetTools() {
   const [galSpanDays, setGalSpanDays] = useState<number>(7);
   const [galInverted, setGalInverted] = useState<boolean>(false);
   const [galView, setGalView] = useState<GalileanViewData | null>(null);
+
+  // Tab 8: Saturnian Moons
+  const [satSpanDays, setSatSpanDays] = useState<number>(16);
+  const [satInverted, setSatInverted] = useState<boolean>(false);
+  const [satScaleRs, setSatScaleRs] = useState<number>(26);
+  const [satView, setSatView] = useState<SaturnMoonsViewData | null>(null);
 
   const simTimeBucket = simPlaying ? Math.floor(performance.now() / 380) : jdUt;
   const slowSimBucket = simPlaying ? Math.floor(performance.now() / 700) : jdUt;
@@ -371,6 +381,27 @@ export function PlanetTools() {
       cancelled = true;
     };
   }, [tab, simTimeBucket, galSpanDays, grsLon, location.lat_deg, location.lon_deg, location.alt_m, location.tz_offset_min]);
+
+  // Tab 8 fetch (Saturnian Moons)
+  useEffect(() => {
+    if (tab !== "saturn_moons" || !isTauri()) return;
+    let cancelled = false;
+    void invoke<SaturnMoonsViewData>("get_saturn_moons_view", {
+      req: {
+        jd_ut: useSkyStore.getState().jdUt,
+        span_days: satSpanDays,
+        lat_deg: location.lat_deg,
+        lon_deg: location.lon_deg,
+        alt_m: location.alt_m,
+        tz_offset_min: location.tz_offset_min,
+      },
+    }).then((res) => {
+      if (!cancelled) setSatView(res);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, simTimeBucket, satSpanDays, location.lat_deg, location.lon_deg, location.alt_m, location.tz_offset_min]);
 
   // Track SVG bounds
   const trackBounds = useMemo(() => {
@@ -651,6 +682,7 @@ export function PlanetTools() {
                   ringTiltDeg={appearance.saturn_ring_tilt_deg}
                   jupiterPhys={appearance.jupiter_phys}
                   galileanMoons={appearance.galilean_moons}
+                  showLunarLabels={showMoonLabels}
                   waxing={appearance.waxing}
                   size={212}
                 />
@@ -696,6 +728,17 @@ export function PlanetTools() {
                       土星の環の傾き B: <strong>{appearance.saturn_ring_tilt_deg.toFixed(2)}°</strong>{" "}
                       ({appearance.saturn_ring_tilt_deg >= 0 ? "北面見頃" : "南面見頃"})
                     </div>
+                  )}
+
+                  {appearance.id === "moon" && (
+                    <label className="flex cursor-pointer items-center justify-between rounded-lg bg-[var(--bg-surface)] px-2.5 py-1.5 text-[10.5px]">
+                      <span>月面の海・クレーター名を表示</span>
+                      <input
+                        type="checkbox"
+                        checked={showMoonLabels}
+                        onChange={(e) => setShowMoonLabels(e.target.checked)}
+                      />
+                    </label>
                   )}
 
                   {appearance.jupiter_phys && (
@@ -1734,6 +1777,417 @@ export function PlanetTools() {
                         <span>{tr.time_str}</span>
                         <span className={tr.observable ? "font-semibold text-emerald-300" : "text-[var(--text-muted)]"}>
                           木星 {tr.jupiter_alt_deg.toFixed(0)}°
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {/* TAB 8: Saturnian Moons Simulator */}
+        {tab === "saturn_moons" && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/65 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-1">
+                {[7, 16, 32].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setSatSpanDays(d)}
+                    className={`rounded border px-2 py-0.5 font-mono-num text-[10.5px] ${
+                      satSpanDays === d
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-primary-fg)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                    }`}
+                  >
+                    {d}日
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setSatInverted((v) => !v)}
+                  className="ml-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-0.5 text-[10.5px]"
+                >
+                  {satInverted ? "倒立像 (S上)" : "正立 (N上)"}
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1 text-[10.5px]">
+                {[
+                  { rs: 14, label: "内衛星 ±14R" },
+                  { rs: 26, label: "タイタン ±26R" },
+                  { rs: 64, label: "広域 ±64R" },
+                ].map((opt) => (
+                  <button
+                    key={opt.rs}
+                    type="button"
+                    onClick={() => setSatScaleRs(opt.rs)}
+                    className={`rounded border px-1.5 py-0.5 font-mono-num text-[10px] ${
+                      satScaleRs === opt.rs
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                <div className="ml-1 flex gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => stepTimeMinutes(-360)}
+                    className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
+                  >
+                    -6h
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => stepTimeMinutes(-60)}
+                    className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
+                  >
+                    -1h
+                  </button>
+                  <button
+                    type="button"
+                    onClick={setNow}
+                    className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10px]"
+                  >
+                    現在
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => stepTimeMinutes(60)}
+                    className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
+                  >
+                    +1h
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => stepTimeMinutes(360)}
+                    className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
+                  >
+                    +6h
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {!isTauri() && (
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-xs text-[var(--text-muted)]">
+                土星の衛星軌道シミュレーションはデスクトップ / Android アプリ版で利用できます。
+              </div>
+            )}
+
+            {satView && (
+              <>
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[#040712] p-2.5">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
+                    <span className="font-mono-num">
+                      環の傾き B {satView.physical.ring_tilt_earth_deg.toFixed(2)}° / 北極位置角 P{" "}
+                      {satView.physical.north_pole_pa_deg.toFixed(1)}°
+                    </span>
+                    <span className="font-mono-num text-[var(--text-muted)]">
+                      赤道視直径 {satView.physical.apparent_eq_diam_arcsec.toFixed(1)}″ / 距離{" "}
+                      {satView.physical.geo_au.toFixed(3)} AU
+                    </span>
+                  </div>
+
+                  <svg viewBox="0 0 460 116" className="w-full">
+                    {(() => {
+                      const cx = 230;
+                      const cy = 58;
+                      const sign = satInverted ? -1 : 1;
+                      const scale = 204 / satScaleRs;
+                      const rSat = Math.max(4.5, scale);
+                      const sinB = Math.sin(
+                        (Math.abs(satView.physical.ring_tilt_earth_deg) * Math.PI) / 180,
+                      );
+                      const frontIsBottom =
+                        sign * satView.physical.ring_tilt_earth_deg >= 0;
+                      const outerRx = Math.max(8, satView.physical.ring_outer_rs * rSat);
+                      const outerRy = Math.max(1.2, outerRx * sinB);
+                      const cassiniRx = Math.max(7, satView.physical.cassini_rs * rSat);
+                      const cassiniRy = Math.max(1.0, cassiniRx * sinB);
+                      const innerRx = Math.max(5.5, satView.physical.ring_inner_rs * rSat);
+                      const innerRy = Math.max(0.9, innerRx * sinB);
+
+                      const moonCols: Record<string, string> = {
+                        mimas: "#cbd5e1",
+                        enceladus: "#f8fafc",
+                        tethys: "#bae6fd",
+                        dione: "#7dd3fc",
+                        rhea: "#fde68a",
+                        titan: "#fb923c",
+                        hyperion: "#c4b5fd",
+                        iapetus: "#fca5a5",
+                      };
+
+                      const renderRingHalf = (topHalf: boolean) => {
+                        const largeSweep = topHalf
+                          ? `A ${outerRx} ${outerRy} 0 0 1 ${cx + outerRx} ${cy}`
+                          : `A ${outerRx} ${outerRy} 0 0 0 ${cx + outerRx} ${cy}`;
+                        const innerBack = topHalf
+                          ? `A ${innerRx} ${innerRy} 0 0 0 ${cx - innerRx} ${cy}`
+                          : `A ${innerRx} ${innerRy} 0 0 1 ${cx - innerRx} ${cy}`;
+                        const cassiniArc = topHalf
+                          ? `M ${cx - cassiniRx} ${cy} A ${cassiniRx} ${cassiniRy} 0 0 1 ${cx + cassiniRx} ${cy}`
+                          : `M ${cx - cassiniRx} ${cy} A ${cassiniRx} ${cassiniRy} 0 0 0 ${cx + cassiniRx} ${cy}`;
+                        return (
+                          <g>
+                            <path
+                              d={`M ${cx - outerRx} ${cy} ${largeSweep} L ${cx + innerRx} ${cy} ${innerBack} Z`}
+                              fill="rgba(253, 230, 138, 0.58)"
+                            />
+                            <path
+                              d={cassiniArc}
+                              fill="none"
+                              stroke="rgba(4, 7, 18, 0.78)"
+                              strokeWidth={Math.max(0.7, rSat * 0.11)}
+                            />
+                          </g>
+                        );
+                      };
+
+                      const orderedByX = [...satView.moons].sort(
+                        (a, b) => sign * a.x_rs - sign * b.x_rs,
+                      );
+                      const labelTier = new Map<string, number>();
+                      orderedByX.forEach((m, i) => labelTier.set(m.id, i % 3));
+
+                      return (
+                        <>
+                          <line x1="12" y1={cy} x2="448" y2={cy} stroke="rgba(148,163,184,0.2)" />
+                          <text x="16" y="13" fontSize="9" fill="#94a3b8">
+                            {satInverted ? "W (西)" : "E (東)"}
+                          </text>
+                          <text x="444" y="13" textAnchor="end" fontSize="9" fill="#94a3b8">
+                            {satInverted ? "E (東)" : "W (西)"}
+                          </text>
+
+                          {/* Back moons behind Saturn/rings */}
+                          {satView.moons
+                            .filter((m) => m.z_rs < 0)
+                            .map((m) => {
+                              const mx = cx + sign * m.x_rs * scale;
+                              const my = cy - sign * m.y_rs * scale;
+                              return (
+                                <circle
+                                  key={`${m.id}-b`}
+                                  cx={mx}
+                                  cy={my}
+                                  r={m.id === "titan" ? 4.2 : 3.0}
+                                  fill={m.in_eclipse ? "#475569" : moonCols[m.id] ?? "#fff"}
+                                  opacity={m.in_occultation ? 0.22 : 0.9}
+                                />
+                              );
+                            })}
+
+                          {/* Back ring half */}
+                          {renderRingHalf(frontIsBottom)}
+
+                          {/* Oblate Saturn globe */}
+                          <ellipse cx={cx} cy={cy} rx={rSat} ry={rSat * 0.902} fill="#f3d89b" />
+
+                          {/* Front ring half */}
+                          {renderRingHalf(!frontIsBottom)}
+
+                          {/* Front moons + staggered labels */}
+                          {satView.moons.map((m) => {
+                            const mx = cx + sign * m.x_rs * scale;
+                            const my = cy - sign * m.y_rs * scale;
+                            const col = moonCols[m.id] ?? "#fff";
+                            const inView = mx >= 12 && mx <= 448;
+                            const tier = labelTier.get(m.id) ?? 0;
+                            const ly = tier === 0 ? 22 : tier === 1 ? 94 : 108;
+                            return (
+                              <g key={m.id} opacity={inView ? 1 : 0.3}>
+                                {m.z_rs >= 0 && (
+                                  <circle
+                                    cx={Math.max(12, Math.min(448, mx))}
+                                    cy={my}
+                                    r={m.id === "titan" ? 4.5 : 3.2}
+                                    fill={m.in_eclipse ? "#475569" : col}
+                                    stroke="#040712"
+                                    strokeWidth="0.6"
+                                  />
+                                )}
+                                {inView && (
+                                  <>
+                                    <line
+                                      x1={mx}
+                                      y1={my}
+                                      x2={mx}
+                                      y2={ly > cy ? ly - 8 : ly + 3}
+                                      stroke={col}
+                                      strokeWidth="0.6"
+                                      opacity="0.45"
+                                    />
+                                    <text
+                                      x={mx}
+                                      y={ly}
+                                      textAnchor="middle"
+                                      fontSize="8.5"
+                                      fill={col}
+                                      fontFamily="monospace"
+                                    >
+                                      {m.roman} {m.name_ja.slice(0, 3)}
+                                    </text>
+                                  </>
+                                )}
+                              </g>
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
+                  </svg>
+
+                  <div className="mt-1 grid grid-cols-4 gap-1 text-[10px]">
+                    {satView.moons.map((m) => (
+                      <div key={m.id} className="rounded bg-[var(--bg-surface)] px-1.5 py-1">
+                        <div className="flex items-center justify-between gap-1 font-semibold">
+                          <span className="truncate">
+                            {m.roman} {m.name_ja}
+                          </span>
+                          <span className="font-mono-num text-[9px] text-[var(--text-muted)]">
+                            {m.mag.toFixed(1)}等
+                          </span>
+                        </div>
+                        <div className="font-mono-num text-[9px] text-[var(--text-muted)]">
+                          {m.x_rs >= 0 ? `W${m.x_rs.toFixed(1)}` : `E${Math.abs(m.x_rs).toFixed(1)}`}Rs (
+                          {m.separation_arcsec.toFixed(0)}″) ・{m.status_ja}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Saturn Moons Wave Curve */}
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[#040712] p-2.5">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-1 text-[10.5px]">
+                    <span className="font-semibold">土星の衛星 波動曲線 (クリックで時刻移動)</span>
+                    <div className="flex flex-wrap gap-2 font-mono-num text-[9.5px]">
+                      <span className="text-sky-200">III テティス</span>
+                      <span className="text-sky-300">IV ディオネ</span>
+                      <span className="text-amber-200">V レア</span>
+                      <span className="text-orange-400">VI タイタン</span>
+                      <span className="text-violet-300">VII ヒペリオン</span>
+                      <span className="text-rose-300">VIII イアペトゥス</span>
+                    </div>
+                  </div>
+                  {(() => {
+                    const samples = satView.wave_samples;
+                    if (samples.length < 2) return null;
+                    const W = 460;
+                    const H = 200;
+                    const L = 42;
+                    const R = 445;
+                    const sign = satInverted ? -1 : 1;
+                    const cx = L + (R - L) * 0.5;
+                    const xScale = (R - L) / (satScaleRs * 2);
+                    const yOf = (i: number) => 10 + (i / (samples.length - 1)) * (H - 20);
+                    const startJd = samples[0].jd_ut;
+                    const endJd = samples[samples.length - 1].jd_ut;
+                    const curRatio = (jdUt - startJd) / Math.max(1e-6, endJd - startJd);
+
+                    const makePath = (pick: (s: (typeof samples)[number]) => number) =>
+                      samples
+                        .map(
+                          (s, i) =>
+                            `${Math.max(L, Math.min(R, cx + sign * pick(s) * xScale)).toFixed(1)},${yOf(i).toFixed(1)}`,
+                        )
+                        .join(" ");
+
+                    return (
+                      <svg
+                        viewBox={`0 0 ${W} ${H}`}
+                        className="w-full cursor-pointer"
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const sy = ((e.clientY - rect.top) / rect.height) * H;
+                          const rel = Math.max(0, Math.min(1, (sy - 10) / (H - 20)));
+                          jumpToJdUt(startJd + rel * (endJd - startJd));
+                        }}
+                      >
+                        <rect
+                          x={cx - Math.max(2, xScale * 2.27)}
+                          y="10"
+                          width={Math.max(4, xScale * 4.54)}
+                          height={H - 20}
+                          fill="rgba(253, 230, 138, 0.14)"
+                        />
+                        <rect
+                          x={cx - Math.max(1.5, xScale)}
+                          y="10"
+                          width={Math.max(3, xScale * 2)}
+                          height={H - 20}
+                          fill="rgba(243, 216, 155, 0.25)"
+                        />
+                        <polyline fill="none" stroke="#fca5a5" strokeWidth="1.1" opacity="0.85" points={makePath((s) => s.iapetus_x)} />
+                        <polyline fill="none" stroke="#c4b5fd" strokeWidth="1.0" opacity="0.7" points={makePath((s) => s.hyperion_x)} />
+                        <polyline fill="none" stroke="#fb923c" strokeWidth="1.8" points={makePath((s) => s.titan_x)} />
+                        <polyline fill="none" stroke="#fde68a" strokeWidth="1.4" points={makePath((s) => s.rhea_x)} />
+                        <polyline fill="none" stroke="#7dd3fc" strokeWidth="1.2" points={makePath((s) => s.dione_x)} />
+                        <polyline fill="none" stroke="#bae6fd" strokeWidth="1.1" points={makePath((s) => s.tethys_x)} />
+
+                        {curRatio >= 0 && curRatio <= 1 && (
+                          <line
+                            x1={L}
+                            x2={R}
+                            y1={10 + curRatio * (H - 20)}
+                            y2={10 + curRatio * (H - 20)}
+                            stroke="#38bdf8"
+                            strokeWidth="1.2"
+                            strokeDasharray="4 2"
+                          />
+                        )}
+
+                        {[0, 0.25, 0.5, 0.75, 1].map((r) => {
+                          const idx = Math.round(r * (samples.length - 1));
+                          return (
+                            <text
+                              key={r}
+                              x={L - 4}
+                              y={yOf(idx) + 3}
+                              textAnchor="end"
+                              fontSize="8.5"
+                              fill="#94a3b8"
+                              fontFamily="monospace"
+                            >
+                              {samples[idx]?.time_label}
+                            </text>
+                          );
+                        })}
+                      </svg>
+                    );
+                  })()}
+                </div>
+
+                {/* Titan Elongations */}
+                <div className="space-y-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/65 p-2.5">
+                  <div className="font-semibold text-[var(--text-secondary)]">
+                    タイタン 最大離角予報（クリックで時刻へジャンプ）
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {satView.titan_elongations.map((ev) => (
+                      <button
+                        key={ev.jd_ut}
+                        type="button"
+                        onClick={() => jumpToJdUt(ev.jd_ut)}
+                        className={`flex items-center justify-between rounded-lg border px-2 py-1 text-left font-mono-num text-[10px] transition ${
+                          ev.observable
+                            ? "border-emerald-500/35 bg-emerald-500/10 hover:border-emerald-400"
+                            : "border-[var(--border-subtle)] bg-[var(--bg-surface)]/70 hover:border-[var(--accent-primary)]"
+                        }`}
+                      >
+                        <div>
+                          <div className="font-semibold">{ev.direction_ja}</div>
+                          <div className="text-[9.5px] text-[var(--text-muted)]">{ev.time_str}</div>
+                        </div>
+                        <span className={ev.observable ? "font-semibold text-emerald-300" : "text-[var(--text-muted)]"}>
+                          {ev.sep_arcsec.toFixed(0)}″
                         </span>
                       </button>
                     ))}

@@ -9,6 +9,8 @@ import {
 import { CONSTELLATION_ARTWORK } from "@/lib/constellationArt";
 import { computeFovDimensions } from "@/lib/fovMath";
 import { getMilkyWaySpriteAtlas, getOrBuildMilkyWayClouds } from "@/lib/milkyWayCloud";
+import { drawHipsSurveyLayer } from "@/lib/hipsSurvey";
+import { LUNAR_FEATURES, projectLunarFeature } from "@/lib/lunarFeatures";
 import { renderPanoramaLandscape } from "@/lib/panoramaLandscape";
 import {
   applyStandardRefractionDeg,
@@ -35,9 +37,11 @@ import {
 } from "@/lib/spatialSkyIndex";
 import {
   type CustomColorPalette,
+  DEFAULT_HIPS_CONFIG,
   DEFAULT_LANDSCAPE_CONFIG,
   type DsoEntry,
   type FovPreset,
+  type HipsSurveyConfig,
   type LandscapeConfig,
   type LocationPreset,
   type MeteorShower,
@@ -550,6 +554,8 @@ export interface SkyRenderArgs {
   showSatellites?: boolean;
   highlightedSatPass?: SatellitePass | null;
   landscapeConfig?: LandscapeConfig;
+  hipsConfig?: HipsSurveyConfig;
+  offlineMode?: boolean;
   printColorMode?: PrintColorMode;
   skipMeteors?: boolean;
   fastInteractive?: boolean;
@@ -1440,6 +1446,7 @@ function drawMoonPhase(
   refractionEnabled: boolean,
   scratch: Float64Array,
   zoomTextures: boolean,
+  lunarLabels: boolean,
   isInverted: boolean,
   onTextureLoaded?: () => void,
 ): number {
@@ -1536,6 +1543,77 @@ function drawMoonPhase(
     c.drawImage(lunarTex, -r, -r, r * 2, r * 2);
   }
   c.restore();
+
+  // Selenographic lunar maria & crater labels when zoomed into the Moon
+  if (lunarLabels && r >= 32) {
+    const uxSun = Math.cos(sunAngle);
+    const uySun = Math.sin(sunAngle);
+    const threshold = 1 - 2 * k - 0.08;
+    const boxes: [number, number, number, number][] = [];
+    const fontSize = Math.max(8.5, Math.min(11, r * 0.14));
+
+    c.save();
+    c.font = `600 ${fontSize.toFixed(1)}px "Noto Sans JP", system-ui, sans-serif`;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+
+    for (const feat of LUNAR_FEATURES) {
+      if (feat.rank === 1 && feat.kind !== "mare" && r < 54) continue;
+      if (feat.rank === 2 && r < 105) continue;
+      const proj = projectLunarFeature(feat, 0, 0, r, northRot);
+      if (!proj.isVisibleLimb) continue;
+
+      const uSun = (proj.x * uxSun + proj.y * uySun) / r;
+      const isLit = k >= 0.96 || uSun >= threshold;
+      const alpha = isLit ? 0.94 : 0.34;
+      const tw = c.measureText(feat.nameJa).width + 6;
+      const th = fontSize + 4;
+      const ly = proj.y - (feat.kind === "mare" ? 0 : 7);
+      const bx1 = proj.x - tw * 0.5;
+      const bx2 = proj.x + tw * 0.5;
+      const by1 = ly - th * 0.5;
+      const by2 = ly + th * 0.5;
+
+      let overlaps = false;
+      for (const b of boxes) {
+        if (bx1 < b[2] && bx2 > b[0] && by1 < b[3] && by2 > b[1]) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (overlaps) continue;
+      boxes.push([bx1, by1, bx2, by2]);
+
+      if (feat.kind !== "mare") {
+        c.fillStyle = nightVision
+          ? `rgba(248, 113, 113, ${alpha})`
+          : isInverted
+            ? `rgba(15, 23, 42, ${alpha})`
+            : feat.kind === "mountain"
+              ? `rgba(125, 211, 252, ${alpha})`
+              : `rgba(253, 224, 71, ${alpha})`;
+        c.beginPath();
+        c.arc(proj.x, proj.y, 1.8, 0, Math.PI * 2);
+        c.fill();
+      }
+
+      c.globalAlpha = alpha;
+      c.lineWidth = 2.4;
+      c.strokeStyle = isInverted ? "rgba(255,255,255,0.85)" : "rgba(4, 8, 20, 0.85)";
+      c.strokeText(feat.nameJa, proj.x, ly);
+      c.fillStyle = nightVision
+        ? "#fca5a5"
+        : isInverted
+          ? "#0f172a"
+          : feat.kind === "mare"
+            ? "#cbd5e1"
+            : feat.kind === "mountain"
+              ? "#7dd3fc"
+              : "#fef08a";
+      c.fillText(feat.nameJa, proj.x, ly);
+    }
+    c.restore();
+  }
 
   c.strokeStyle = nightVision ? "rgba(239, 68, 68, 0.65)" : "rgba(255, 250, 220, 0.65)";
   c.lineWidth = 0.85;
@@ -1967,6 +2045,8 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     showSatellites = true,
     highlightedSatPass = null,
     landscapeConfig = DEFAULT_LANDSCAPE_CONFIG,
+    hipsConfig = DEFAULT_HIPS_CONFIG,
+    offlineMode = false,
     printColorMode = "normal",
     skipMeteors = false,
     fastInteractive = false,
@@ -2047,11 +2127,50 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     const canCullHorizon = !params.show_below_horizon && !showOppositeGroundSky;
     const cullCone = computePanelCullCone(skyPCtx, panel, mJ2000ToEnu, mJ2000ToApp);
 
+    // Seamless All-Sky Real-Sky Survey (HiPS / DSS2 / 2MASS)
+    if (hipsConfig.enabled && !isOtherStar && !isInverted) {
+      drawHipsSurveyLayer({
+        ctx: c,
+        config: hipsConfig,
+        offlineMode,
+        nightVision,
+        starVisibilityFactor: effectivePalette.star_visibility_factor,
+        pxPerDeg,
+        width,
+        height,
+        fastInteractive,
+        cullCone,
+        canCullHorizon,
+        m20,
+        m21,
+        m22,
+        projectJ2000: (vx, vy, vz, out) =>
+          projectJ2000UnitVec(
+            vx,
+            vy,
+            vz,
+            mJ2000ToEnu,
+            mJ2000ToApp,
+            skyPCtx,
+            panel,
+            isChart,
+            false,
+            false,
+            out,
+            0,
+          ),
+      });
+    }
+
     // Milky Way (Galactic cloud puff splatting across all 9 projections without contour seam bugs)
     if (layers.milkyWay && staticAssets && !isOtherStar && effectivePalette.star_visibility_factor > 0.14) {
       const clouds = getOrBuildMilkyWayClouds(staticAssets.milky_way);
       const mwSprites = getMilkyWaySpriteAtlas();
-      const visScale = (0.28 + 0.72 * effectivePalette.star_visibility_factor) * (effFov < 25 ? 0.6 : 0.88);
+      const hipsAtten = hipsConfig.enabled ? 0.35 : 1.0;
+      const visScale =
+        (0.28 + 0.72 * effectivePalette.star_visibility_factor) *
+        (effFov < 25 ? 0.6 : 0.88) *
+        hipsAtten;
       const minMwDot =
         cullCone.useCone && cullCone.halfConeRad + 0.16 < Math.PI
           ? Math.cos(cullCone.halfConeRad + 0.16)
@@ -2644,6 +2763,7 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
                 refractionEnabled,
                 scratch,
                 layers.zoomTextures,
+                layers.lunarLabels,
                 isInverted,
                 onTextureLoaded,
               )

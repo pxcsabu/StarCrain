@@ -20,6 +20,10 @@ use crate::engine::jupiter_sat::{
     GalileanMoonPosition, GrsTransitEvent, JupiterPhysicalEphemeris, galilean_moons_at,
     jupiter_physical_ephemeris, upcoming_grs_transits,
 };
+use crate::engine::saturn_sat::{
+    SaturnMoonPosition, SaturnPhysicalEphemeris, TitanElongationEvent, saturn_moon_x_at,
+    saturn_moons_at, upcoming_titan_elongations,
+};
 use crate::engine::phenomena::{
     search_planet_clusters, search_planet_planet_conjunctions, search_planet_star_conjunctions,
     search_planetary_phenomena,
@@ -1029,6 +1033,101 @@ pub fn get_galilean_moons_view(req: GalileanViewRequest) -> GalileanViewData {
 }
 
 // =========================================================================
+// 8b. Saturnian Moons Wave Curve & Titan Elongations
+// =========================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaturnMoonsViewRequest {
+    pub jd_ut: f64,
+    pub span_days: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub tz_offset_min: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SaturnWaveSample {
+    pub jd_ut: f64,
+    pub time_label: String,
+    pub mimas_x: f64,
+    pub enceladus_x: f64,
+    pub tethys_x: f64,
+    pub dione_x: f64,
+    pub rhea_x: f64,
+    pub titan_x: f64,
+    pub hyperion_x: f64,
+    pub iapetus_x: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SaturnMoonsViewData {
+    pub jd_ut: f64,
+    pub physical: SaturnPhysicalEphemeris,
+    pub moons: Vec<SaturnMoonPosition>,
+    pub wave_samples: Vec<SaturnWaveSample>,
+    pub titan_elongations: Vec<TitanElongationEvent>,
+}
+
+pub fn get_saturn_moons_view_impl(req: &SaturnMoonsViewRequest) -> SaturnMoonsViewData {
+    let jd_tt = ut_to_tt_jd(req.jd_ut);
+    let (physical, moons) = saturn_moons_at(jd_tt);
+
+    let span = req.span_days.clamp(2.0, 40.0);
+    let wave_start = req.jd_ut - span * 0.15;
+    let total_hours = span * 24.0;
+    let step_hours = if span <= 8.0 {
+        1.5
+    } else if span <= 18.0 {
+        3.0
+    } else {
+        6.0
+    };
+    let steps = (total_hours / step_hours).ceil() as usize;
+
+    let wave_samples: Vec<SaturnWaveSample> = (0..=steps)
+        .into_par_iter()
+        .map(|i| {
+            let jd = wave_start + (f64::from(i as u32) * step_hours) / 24.0;
+            let xs = saturn_moon_x_at(ut_to_tt_jd(jd));
+            SaturnWaveSample {
+                jd_ut: jd,
+                time_label: format_local_md(jd, req.tz_offset_min),
+                mimas_x: xs[0],
+                enceladus_x: xs[1],
+                tethys_x: xs[2],
+                dione_x: xs[3],
+                rhea_x: xs[4],
+                titan_x: xs[5],
+                hyperion_x: xs[6],
+                iapetus_x: xs[7],
+            }
+        })
+        .collect();
+
+    let loc = ObserverLocation {
+        lat_deg: req.lat_deg,
+        lon_deg: req.lon_deg,
+        alt_m: req.alt_m,
+        tz_offset_min: req.tz_offset_min,
+    };
+    let titan_elongations = upcoming_titan_elongations(req.jd_ut, 6, &loc);
+
+    SaturnMoonsViewData {
+        jd_ut: req.jd_ut,
+        physical,
+        moons,
+        wave_samples,
+        titan_elongations,
+    }
+}
+
+#[tauri::command]
+pub fn get_saturn_moons_view(req: SaturnMoonsViewRequest) -> SaturnMoonsViewData {
+    get_saturn_moons_view_impl(&req)
+}
+
+// =========================================================================
 // 9. Phase 6: 3D Solar System State (Planets, Dwarf Planets, Comets, Orbits)
 // =========================================================================
 
@@ -1346,6 +1445,18 @@ mod tests {
         assert_eq!(g.moons.len(), 4);
         assert_eq!(g.grs_transits.len(), 12);
         assert!(!g.wave_samples.is_empty());
+
+        let s = get_saturn_moons_view_impl(&SaturnMoonsViewRequest {
+            jd_ut: jd,
+            span_days: 16.0,
+            lat_deg: 34.6431,
+            lon_deg: 134.9972,
+            alt_m: 10.0,
+            tz_offset_min: 540,
+        });
+        assert_eq!(s.moons.len(), 8);
+        assert!(!s.wave_samples.is_empty());
+        assert!(!s.titan_elongations.is_empty());
 
         let dir = resolve_assets_dir(None).expect("assets dir");
         let store = CatalogStore::load_from_dir(&dir).expect("catalog load");
