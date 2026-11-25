@@ -1,4 +1,4 @@
-name: Release Windows Updater
+name: Release Windows & Android
 
 on:
   push:
@@ -64,7 +64,161 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "StarCrane v__VERSION__"
-          releaseBody: "StarCrane Windows 自動アップデート対応リリースです。"
+          releaseBody: "StarCrane Windows / Android 自動アップデート対応リリースです。"
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  build-android:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Android signing secrets
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::GitHub repository secret $v is not set."
+              exit 1
+            fi
+          done
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Read app version
+        id: meta
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: android-aarch64
+
+      - name: Setup Android SDK 36 & NDK 27
+        shell: bash
+        run: |
+          ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=""
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | head -n1)"
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::Android sdkmanager not found under $ANDROID_HOME"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+
+          NDK_DIR="$ANDROID_HOME/ndk/27.2.12479018"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/build-tools/36.0.0" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+          sed -i 's/\r$//' src-tauri/gen/android/gradlew
+          chmod +x src-tauri/gen/android/gradlew
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Android arm64 release APK
+        run: pnpm exec tauri android build --apk --target aarch64
+
+      - name: Zipalign & sign release APK
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.meta.outputs.version }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KS_PATH="$RUNNER_TEMP/starcrane-release.jks"
+          ALIGNED_APK="$RUNNER_TEMP/starcrane-aligned.apk"
+          trap 'rm -f "$KS_PATH" "$ALIGNED_APK"' EXIT
+
+          mkdir -p dist-ci
+          RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk/arm64/release -maxdepth 1 -type f -name '*.apk' 2>/dev/null | head -n1 || true)"
+          if [ -z "$RAW_APK" ]; then
+            RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | sort | head -n1 || true)"
+          fi
+          if [ -z "$RAW_APK" ]; then
+            echo "::error::No built APK found under src-tauri/gen/android/app/build/outputs/apk"
+            exit 1
+          fi
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$KS_PATH"
+          OUT_APK="dist-ci/StarCrane_${APP_VERSION}_arm64-v8a.apk"
+          zipalign -p -f 4 "$RAW_APK" "$ALIGNED_APK"
+          apksigner sign \
+            --ks "$KS_PATH" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "$OUT_APK" \
+            "$ALIGNED_APK"
+          apksigner verify -v "$OUT_APK"
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: starcrane-android-apk
+          path: dist-ci/*.apk
+          retention-days: 1
+
+  attach-android-apk:
+    runs-on: ubuntu-latest
+    needs: [publish-tauri, build-android]
+
+    steps:
+      - name: Download signed APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: starcrane-android-apk
+          path: dist-ci
+
+      - name: Attach APK to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.build-android.outputs.version }}
+        run: |
+          gh release upload "$TAG" dist-ci/*.apk --clobber
