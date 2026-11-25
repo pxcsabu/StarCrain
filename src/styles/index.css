@@ -121,9 +121,14 @@
 .starcrane-floating-window > .starcrane-floating-surface {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0%;
+  flex: 1 1 auto;
   min-height: 0;
   width: 100%;
+}
+
+.starcrane-floating-window[data-resized="true"] > .starcrane-floating-surface {
+  flex: 1 1 0%;
+  height: 100%;
 }
 
 .starcrane-floating-window[data-multi="true"][data-focused="false"] > .starcrane-floating-surface {

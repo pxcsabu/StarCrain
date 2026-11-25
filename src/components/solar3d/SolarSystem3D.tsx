@@ -89,6 +89,7 @@ export function SolarSystem3D() {
   const [daysPerSec, setDaysPerSec] = useState<number>(15);
   const [localJd, setLocalJd] = useState<number>(jdUt);
   const [bodies, setBodies] = useState<SolarSystem3DBody[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const labelDomRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const lastLabelPosRef = useRef<Map<string, { x: number; y: number; vis: boolean }>>(new Map());
@@ -133,6 +134,8 @@ export function SolarSystem3D() {
   focusIdRef.current = focusId;
   const scaleModeRef = useRef<"compressed" | "true">(scaleMode);
   scaleModeRef.current = scaleMode;
+  const showOrbitsRef = useRef<boolean>(showOrbits);
+  showOrbitsRef.current = showOrbits;
   const showLabelsRef = useRef<boolean>(showLabels);
   showLabelsRef.current = showLabels;
   const fetchInFlightRef = useRef<boolean>(false);
@@ -266,6 +269,11 @@ export function SolarSystem3D() {
       sceneRef.current.renderer.setSize(w, h);
     });
     ro.observe(container);
+
+    if (latestBodiesRef.current.length > 0) {
+      rebuildOrbitGeometry(latestBodiesRef.current);
+      updateBodyMeshes(latestBodiesRef.current);
+    }
 
     let rafId = 0;
     const tmpLabel = new THREE.Vector3();
@@ -430,14 +438,14 @@ export function SolarSystem3D() {
       }
     }
 
-    if (!showOrbits) return;
+    if (!showOrbitsRef.current) return;
 
     // Ecliptic AU reference rings
     for (const au of [1.0, 5.2, 10.0, 30.0]) {
       const pts: THREE.Vector3[] = [];
       for (let i = 0; i <= 180; i++) {
         const ang = (i / 180) * Math.PI * 2;
-        pts.push(mapAuToScene([Math.cos(ang) * au, Math.sin(ang) * au, 0], scaleMode));
+        pts.push(mapAuToScene([Math.cos(ang) * au, Math.sin(ang) * au, 0], scaleModeRef.current));
       }
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
       const mat = new THREE.LineBasicMaterial({
@@ -451,7 +459,7 @@ export function SolarSystem3D() {
     for (const b of bodyList) {
       const rawOrbit = cachedOrbitsRef.current.get(b.id) ?? b.orbit_xyz_au;
       if (!rawOrbit || rawOrbit.length < 2) continue;
-      const pts = rawOrbit.map((p) => mapAuToScene(p, scaleMode));
+      const pts = rawOrbit.map((p) => mapAuToScene(p, scaleModeRef.current));
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
       const mat = new THREE.LineBasicMaterial({
         color: new THREE.Color(b.color),
@@ -587,7 +595,10 @@ export function SolarSystem3D() {
   const prevCometsVerRef = useRef<number>(cometsVersion);
 
   const requestKeyframe = (targetJd: number, cometsDirty: boolean) => {
-    if (!isTauri()) return;
+    if (!isTauri()) {
+      setLoadError("3D計算エンジンはTauriアプリ実行時のみ利用できます");
+      return;
+    }
     if (!cometsDirty && fetchInFlightRef.current) return;
     if (cometsDirty) {
       simEpochRef.current += 1;
@@ -619,6 +630,7 @@ export function SolarSystem3D() {
       req: { jd_ut: targetJd, include_orbits: needOrbits },
     })
       .then((res) => {
+        setLoadError(null);
         if (needOrbits) {
           for (const b of res.bodies) {
             if (b.orbit_xyz_au.length > 0) {
@@ -645,6 +657,11 @@ export function SolarSystem3D() {
         if (!playingRef.current || now - lastBodiesUiEmitRef.current >= 180) {
           lastBodiesUiEmitRef.current = now;
           setBodies(res.bodies);
+        }
+      })
+      .catch((err) => {
+        if (!playingRef.current) {
+          setLoadError(err instanceof Error ? err.message : String(err));
         }
       })
       .finally(() => {
@@ -682,9 +699,9 @@ export function SolarSystem3D() {
 
   // Play/pause lifecycle: prime lookahead keyframe when starting; sync JD on pause
   useEffect(() => {
-    simEpochRef.current += 1;
     if (!playing) {
       if (wasPlayingRef.current) {
+        simEpochRef.current += 1;
         setLocalJd(localJdRef.current);
         if (syncWithSkyRef.current) {
           jumpToJdUtRef.current(localJdRef.current);
@@ -693,6 +710,7 @@ export function SolarSystem3D() {
       wasPlayingRef.current = false;
       return;
     }
+    simEpochRef.current += 1;
     wasPlayingRef.current = true;
     const seedBodies = latestBodiesRef.current;
     if (seedBodies.length > 0) {
@@ -710,7 +728,7 @@ export function SolarSystem3D() {
   const focusedBody = bodies.find((b) => b.id === focusId) ?? bodies[0] ?? null;
 
   return (
-    <aside className="flex h-full w-[48rem] max-w-[calc(100vw-5.5rem)] flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface-glass)] text-[var(--text-primary)] shadow-2xl backdrop-blur-md">
+    <aside className="flex h-[34rem] max-h-[calc(100dvh-10.5rem)] w-[48rem] max-w-[calc(100vw-5.5rem)] flex-col rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface-glass)] text-[var(--text-primary)] shadow-2xl backdrop-blur-md">
       {/* Header */}
       <div className="flex items-start justify-between gap-2 border-b border-[var(--border-subtle)] px-4 py-2.5">
         <div>
@@ -856,8 +874,20 @@ export function SolarSystem3D() {
       </div>
 
       {/* 3D WebGL Viewport + Floating Label Overlay */}
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-[#030612]">
+      <div className="relative min-h-[18rem] flex-1 overflow-hidden bg-[#030612] sm:min-h-[22rem]">
         <div ref={containerRef} className="h-full w-full" />
+
+        {bodies.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-[var(--text-secondary)]">
+            {loadError ? (
+              <span className="rounded-lg border border-rose-500/40 bg-rose-950/70 px-3 py-2 text-rose-200">
+                3D太陽系の読み込みに失敗しました: {loadError}
+              </span>
+            ) : (
+              <span>3D太陽系データを読み込み中...</span>
+            )}
+          </div>
+        )}
 
         {showLabels && (
           <div className="pointer-events-none absolute inset-0 overflow-hidden">

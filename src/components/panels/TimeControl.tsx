@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Calendar, ChevronLeft, ChevronRight, Clock, Moon, Sun, Sunrise, Sunset, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { useSkyStore } from "@/store/skyStore";
 import type { DaySpecialTimes } from "@/types/sky";
 
@@ -116,56 +117,60 @@ export function TimeControl() {
           <div className="grid grid-cols-5 gap-1">
             <label className="col-span-2 text-[10px] text-[var(--text-secondary)]">
               年
-              <input
-                type="number"
+              <NumberInput
+                integer
                 value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
+                onValueChange={setYear}
                 className="mt-0.5 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-1 font-mono-num text-xs outline-none"
               />
             </label>
             <label className="text-[10px] text-[var(--text-secondary)]">
               月
-              <input
-                type="number"
+              <NumberInput
+                integer
                 min={1}
                 max={12}
+                clampOnBlur
                 value={month}
-                onChange={(e) => setMonth(Number(e.target.value))}
+                onValueChange={setMonth}
                 className="mt-0.5 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-1 font-mono-num text-xs outline-none"
               />
             </label>
             <label className="text-[10px] text-[var(--text-secondary)]">
               日
-              <input
-                type="number"
+              <NumberInput
+                integer
                 min={1}
                 max={31}
+                clampOnBlur
                 value={day}
-                onChange={(e) => setDay(Number(e.target.value))}
+                onValueChange={setDay}
                 className="mt-0.5 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-1 font-mono-num text-xs outline-none"
               />
             </label>
             <label className="text-[10px] text-[var(--text-secondary)]">
               時:分
               <div className="mt-0.5 flex items-center gap-0.5">
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   min={0}
                   max={23}
+                  clampOnBlur
                   value={hour}
-                  onChange={(e) => setHour(Number(e.target.value))}
+                  onValueChange={setHour}
                   className="w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1 py-1 font-mono-num text-xs outline-none"
                 />
               </div>
             </label>
           </div>
           <div className="flex items-center gap-1.5">
-            <input
-              type="number"
+            <NumberInput
+              integer
               min={0}
               max={59}
+              clampOnBlur
               value={minute}
-              onChange={(e) => setMinute(Number(e.target.value))}
+              onValueChange={setMinute}
               className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1 font-mono-num text-xs outline-none"
               aria-label="分"
             />

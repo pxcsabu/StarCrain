@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { PlanetDiskSvg } from "@/components/panels/PlanetDiskSvg";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { useSkyStore } from "@/store/skyStore";
 import type {
   ConjunctionRow,
@@ -1251,15 +1252,16 @@ export function PlanetTools() {
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
                 <label className="flex items-center gap-1">
                   開始年:
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     value={phenStartYear}
                     min={1900}
                     max={2200}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v) && v >= 1800 && v <= 2300) setPhenStartYear(v);
-                    }}
+                    commitMin={1800}
+                    commitMax={2300}
+                    clampOnBlur
+                    fallback={2026}
+                    onValueChange={setPhenStartYear}
                     className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
                   />
                 </label>
@@ -1295,13 +1297,15 @@ export function PlanetTools() {
                   <>
                     <label className="flex items-center gap-1">
                       離角≦
-                      <input
-                        type="number"
+                      <NumberInput
                         step={0.5}
                         min={0.5}
                         max={15}
+                        commitMin={0.1}
+                        clampOnBlur
+                        fallback={3}
                         value={conjMaxSep}
-                        onChange={(e) => setConjMaxSep(Number(e.target.value) || 3)}
+                        onValueChange={setConjMaxSep}
                         className="w-14 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
                       />
                       °
@@ -1330,13 +1334,15 @@ export function PlanetTools() {
                     </select>
                     <label className="flex items-center gap-1">
                       範囲≦
-                      <input
-                        type="number"
+                      <NumberInput
                         step={5}
                         min={10}
                         max={60}
+                        commitMin={1}
+                        clampOnBlur
+                        fallback={25}
                         value={clusterMaxSpan}
-                        onChange={(e) => setClusterMaxSpan(Number(e.target.value) || 25)}
+                        onValueChange={setClusterMaxSpan}
                         className="w-14 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
                       />
                       °
@@ -1361,13 +1367,15 @@ export function PlanetTools() {
                     </select>
                     <label className="flex items-center gap-1">
                       離角≦
-                      <input
-                        type="number"
+                      <NumberInput
                         step={0.5}
                         min={0.5}
                         max={10}
+                        commitMin={0.1}
+                        clampOnBlur
+                        fallback={3}
                         value={conjMaxSep}
-                        onChange={(e) => setConjMaxSep(Number(e.target.value) || 3)}
+                        onValueChange={setConjMaxSep}
                         className="w-14 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
                       />
                       °
@@ -1486,12 +1494,12 @@ export function PlanetTools() {
 
               <div className="flex items-center gap-1.5 text-[10.5px]">
                 <span>GRS経度(II):</span>
-                <input
-                  type="number"
+                <NumberInput
                   value={grsLon}
                   min={0}
                   max={359}
-                  onChange={(e) => setGrsLon(((Number(e.target.value) % 360) + 360) % 360)}
+                  normalize={(v) => ((v % 360) + 360) % 360}
+                  onValueChange={(v) => setGrsLon(((v % 360) + 360) % 360)}
                   className="w-14 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num"
                 />
                 <div className="flex gap-0.5">

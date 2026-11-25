@@ -104,7 +104,7 @@ export function isUpdaterSupported(): boolean {
 
 export const useUpdaterStore = create<UpdaterState>((set, get) => ({
   status: "idle",
-  currentVersion: "0.1.0",
+  currentVersion: "0.1.1",
   availableVersion: null,
   releaseNotes: null,
   progressPct: null,

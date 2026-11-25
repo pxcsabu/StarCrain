@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { Calculator, Compass, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { localYmdHmsToJdUt, nowUtcJd, useSkyStore } from "@/store/skyStore";
 import type {
   CalcAltTimeResult,
@@ -366,65 +367,70 @@ export function AstroCalculator() {
               <div className="grid grid-cols-7 gap-1 font-mono-num">
                 <label className="col-span-2 space-y-0.5">
                   <span className="text-[10px] text-[var(--text-muted)]">年</span>
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     value={jdYear}
-                    onChange={(e) => setJdYear(Number(e.target.value))}
+                    onValueChange={setJdYear}
                     className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-1.5 text-[11px]"
                   />
                 </label>
                 <label className="space-y-0.5">
                   <span className="text-[10px] text-[var(--text-muted)]">月</span>
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     min={1}
                     max={12}
+                    clampOnBlur
                     value={jdMonth}
-                    onChange={(e) => setJdMonth(Number(e.target.value))}
+                    onValueChange={setJdMonth}
                     className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-1 text-[11px]"
                   />
                 </label>
                 <label className="space-y-0.5">
                   <span className="text-[10px] text-[var(--text-muted)]">日</span>
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     min={1}
                     max={31}
+                    clampOnBlur
                     value={jdDay}
-                    onChange={(e) => setJdDay(Number(e.target.value))}
+                    onValueChange={setJdDay}
                     className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-1 text-[11px]"
                   />
                 </label>
                 <label className="space-y-0.5">
                   <span className="text-[10px] text-[var(--text-muted)]">時</span>
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     min={0}
                     max={23}
+                    clampOnBlur
                     value={jdHour}
-                    onChange={(e) => setJdHour(Number(e.target.value))}
+                    onValueChange={setJdHour}
                     className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-1 text-[11px]"
                   />
                 </label>
                 <label className="space-y-0.5">
                   <span className="text-[10px] text-[var(--text-muted)]">分</span>
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     min={0}
                     max={59}
+                    clampOnBlur
                     value={jdMin}
-                    onChange={(e) => setJdMin(Number(e.target.value))}
+                    onValueChange={setJdMin}
                     className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-1 text-[11px]"
                   />
                 </label>
                 <label className="space-y-0.5">
                   <span className="text-[10px] text-[var(--text-muted)]">秒</span>
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     min={0}
                     max={59}
+                    clampOnBlur
                     value={jdSec}
-                    onChange={(e) => setJdSec(Number(e.target.value))}
+                    onValueChange={setJdSec}
                     className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-1 text-[11px]"
                   />
                 </label>

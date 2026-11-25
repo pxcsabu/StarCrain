@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { useSkyStore } from "@/store/skyStore";
 import type {
   LunarEclipseView,
@@ -278,21 +279,29 @@ export function EclipseFinder() {
           <>
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/65 px-3 py-2">
               <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   value={solarStartYear}
                   min={1900}
                   max={2200}
-                  onChange={(e) => setSolarStartYear(Number(e.target.value) || 2026)}
+                  commitMin={1800}
+                  commitMax={2300}
+                  clampOnBlur
+                  fallback={2026}
+                  onValueChange={setSolarStartYear}
                   className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num text-xs"
                 />
                 <span>〜</span>
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   value={solarEndYear}
                   min={1900}
                   max={2250}
-                  onChange={(e) => setSolarEndYear(Number(e.target.value) || 2035)}
+                  commitMin={1800}
+                  commitMax={2300}
+                  clampOnBlur
+                  fallback={2035}
+                  onValueChange={setSolarEndYear}
                   className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num text-xs"
                 />
                 <span>年</span>
@@ -504,21 +513,29 @@ export function EclipseFinder() {
           <>
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/65 px-3 py-2">
               <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   value={lunarStartYear}
                   min={1900}
                   max={2200}
-                  onChange={(e) => setLunarStartYear(Number(e.target.value) || 2026)}
+                  commitMin={1800}
+                  commitMax={2300}
+                  clampOnBlur
+                  fallback={2026}
+                  onValueChange={setLunarStartYear}
                   className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num text-xs"
                 />
                 <span>〜</span>
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   value={lunarEndYear}
                   min={1900}
                   max={2250}
-                  onChange={(e) => setLunarEndYear(Number(e.target.value) || 2035)}
+                  commitMin={1800}
+                  commitMax={2300}
+                  clampOnBlur
+                  fallback={2035}
+                  onValueChange={setLunarEndYear}
                   className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num text-xs"
                 />
                 <span>年</span>
@@ -708,21 +725,29 @@ export function EclipseFinder() {
           <>
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/65 px-3 py-2">
               <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   value={transitStartYear}
                   min={1850}
                   max={2200}
-                  onChange={(e) => setTransitStartYear(Number(e.target.value) || 2020)}
+                  commitMin={1800}
+                  commitMax={2300}
+                  clampOnBlur
+                  fallback={2020}
+                  onValueChange={setTransitStartYear}
                   className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num text-xs"
                 />
                 <span>〜</span>
-                <input
-                  type="number"
+                <NumberInput
+                  integer
                   value={transitEndYear}
                   min={1850}
                   max={2250}
-                  onChange={(e) => setTransitEndYear(Number(e.target.value) || 2055)}
+                  commitMin={1800}
+                  commitMax={2300}
+                  clampOnBlur
+                  fallback={2055}
+                  onValueChange={setTransitEndYear}
                   className="w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-1.5 py-0.5 font-mono-num text-xs"
                 />
                 <span>年</span>

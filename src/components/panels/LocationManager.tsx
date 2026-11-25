@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { JAPAN_PREFECTURES, WORLD_LAND_RINGS } from "@/lib/geoMapData";
 import { useSkyStore } from "@/store/skyStore";
 import type { LocationPreset } from "@/types/sky";
@@ -707,44 +708,43 @@ export function LocationManager() {
               />
               <label className="text-[10px] text-[var(--text-secondary)]">
                 緯度 (°)
-                <input
-                  type="number"
+                <NumberInput
                   step="0.0001"
                   min={-89.9}
                   max={89.9}
+                  clampOnBlur
                   value={form.lat_deg}
-                  onChange={(e) => setForm({ ...form, lat_deg: Number(e.target.value) })}
+                  onValueChange={(v) => setForm({ ...form, lat_deg: v })}
                   className="mt-0.5 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-1 font-mono-num text-xs outline-none"
                 />
               </label>
               <label className="text-[10px] text-[var(--text-secondary)]">
                 経度 (°)
-                <input
-                  type="number"
+                <NumberInput
                   step="0.0001"
                   min={-180}
                   max={180}
+                  clampOnBlur
                   value={form.lon_deg}
-                  onChange={(e) => setForm({ ...form, lon_deg: Number(e.target.value) })}
+                  onValueChange={(v) => setForm({ ...form, lon_deg: v })}
                   className="mt-0.5 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-1 font-mono-num text-xs outline-none"
                 />
               </label>
               <label className="text-[10px] text-[var(--text-secondary)]">
                 標高 (m)
-                <input
-                  type="number"
+                <NumberInput
                   value={form.alt_m}
-                  onChange={(e) => setForm({ ...form, alt_m: Number(e.target.value) })}
+                  onValueChange={(v) => setForm({ ...form, alt_m: v })}
                   className="mt-0.5 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-1 font-mono-num text-xs outline-none"
                 />
               </label>
               <label className="text-[10px] text-[var(--text-secondary)]">
                 時差 (分) / TZ
                 <div className="mt-0.5 flex gap-1">
-                  <input
-                    type="number"
+                  <NumberInput
+                    integer
                     value={form.tz_offset_min}
-                    onChange={(e) => setForm({ ...form, tz_offset_min: Number(e.target.value) })}
+                    onValueChange={(v) => setForm({ ...form, tz_offset_min: v })}
                     className="w-1/2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1 py-1 font-mono-num text-xs outline-none"
                   />
                   <input

@@ -433,20 +433,26 @@ export function ClockTimer() {
 
           <div className="flex items-center gap-1.5 pt-0.5 font-mono-num">
             <input
-              type="number"
-              min={0}
-              max={1440}
+              type="text"
+              inputMode="numeric"
               value={customMin}
-              onChange={(e) => setCustomMin(e.target.value)}
+              onChange={(e) =>
+                setCustomMin(
+                  e.target.value.replace(/[^\d]/g, "").replace(/^0+(\d)/, "$1"),
+                )
+              }
               className="h-7 w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-2 text-[11px]"
             />
             <span className="text-[11px] text-[var(--text-muted)]">分</span>
             <input
-              type="number"
-              min={0}
-              max={59}
+              type="text"
+              inputMode="numeric"
               value={customSec}
-              onChange={(e) => setCustomSec(e.target.value)}
+              onChange={(e) =>
+                setCustomSec(
+                  e.target.value.replace(/[^\d]/g, "").replace(/^0+(\d)/, "$1"),
+                )
+              }
               className="h-7 w-16 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)] px-2 text-[11px]"
             />
             <span className="text-[11px] text-[var(--text-muted)]">秒</span>

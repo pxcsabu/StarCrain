@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Clock, Moon, Sparkles, X } from "lucide-react";
 import { MoonPhaseSvg } from "@/components/panels/MoonPhaseSvg";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { useSkyStore } from "@/store/skyStore";
 import type { MoonCalendarDay, MoonCalendarMonth } from "@/types/sky";
 
@@ -119,15 +120,15 @@ export function MoonCalendar() {
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <input
-              type="number"
+            <NumberInput
+              integer
               value={year}
               min={1800}
               max={2300}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (Number.isFinite(v) && v >= 1600 && v <= 2400) setYear(Math.trunc(v));
-              }}
+              commitMin={1600}
+              commitMax={2400}
+              clampOnBlur
+              onValueChange={setYear}
               className="w-16 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1 text-center font-mono-num text-xs"
             />
             <span className="text-[var(--text-muted)]">年</span>
