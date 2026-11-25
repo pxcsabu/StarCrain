@@ -20,7 +20,11 @@ import { Button } from "@/components/ui/button";
 import { useClockStore, type HourlyChimeMode } from "@/store/clockStore";
 import { useSkyStore } from "@/store/skyStore";
 import { type ThemeMode, useThemeStore } from "@/store/themeStore";
-import { isDesktopUpdaterSupported, useUpdaterStore } from "@/store/updaterStore";
+import {
+  isAndroidUpdaterSupported,
+  isUpdaterSupported,
+  useUpdaterStore,
+} from "@/store/updaterStore";
 import type { AngleFormat, UnitSystem } from "@/types/sky";
 
 type SettingsTab = "general" | "profile" | "licenses";
@@ -75,9 +79,11 @@ export function SettingsPanel() {
   const availableVersion = useUpdaterStore((s) => s.availableVersion);
   const progressPct = useUpdaterStore((s) => s.progressPct);
   const updaterError = useUpdaterStore((s) => s.errorMessage);
+  const updaterNotice = useUpdaterStore((s) => s.noticeMessage);
   const checkAndAutoDownload = useUpdaterStore((s) => s.checkAndAutoDownload);
   const installAndRestart = useUpdaterStore((s) => s.installAndRestart);
-  const updaterSupported = isDesktopUpdaterSupported();
+  const updaterSupported = isUpdaterSupported();
+  const androidUpdater = isAndroidUpdaterSupported();
 
   useEffect(() => {
     void useUpdaterStore.getState().initVersion();
@@ -371,7 +377,7 @@ export function SettingsPanel() {
               </div>
             </section>
 
-            {/* Auto Updater (Desktop) */}
+            {/* Auto Updater (Desktop & Android) */}
             <section className="space-y-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]/80 p-2.5">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-[var(--text-secondary)]">アプリ更新（自動アップデート）</span>
@@ -384,9 +390,13 @@ export function SettingsPanel() {
                     {updaterStatus === "downloading" &&
                       `v${availableVersion} をバックグラウンドで取得中 (${progressPct ?? 0}%)`}
                     {updaterStatus === "ready" &&
-                      `v${availableVersion} の更新準備が完了しています。再起動して適用できます。`}
+                      (androidUpdater
+                        ? `v${availableVersion} のAPKを取得しました。ボタンからインストーラーを起動して更新できます。`
+                        : `v${availableVersion} の更新準備が完了しています。再起動して適用できます。`)}
                     {updaterStatus === "installing" &&
-                      `v${availableVersion} をインストールして再起動しています...`}
+                      (androidUpdater
+                        ? `v${availableVersion} のAndroidインストーラーを起動しています...`
+                        : `v${availableVersion} をインストールして再起動しています...`)}
                     {updaterStatus === "up-to-date" && "現在のバージョンは最新です。"}
                     {updaterStatus === "error" && (
                       <span className="text-[var(--status-danger)]">
@@ -394,8 +404,13 @@ export function SettingsPanel() {
                       </span>
                     )}
                     {updaterStatus === "idle" &&
-                      "起動時に自動で新版をダウンロードし、準備ができ次第お知らせします。"}
+                      (androidUpdater
+                        ? "更新が見つかった場合は最新APKを取得し、インストーラーの起動をお知らせします。"
+                        : "起動時に自動で新版をダウンロードし、準備ができ次第お知らせします。")}
                   </div>
+                  {updaterNotice && (
+                    <div className="text-[10.5px] text-amber-300">{updaterNotice}</div>
+                  )}
                   <div className="flex flex-wrap gap-1.5">
                     {updaterStatus === "ready" && (
                       <Button
@@ -405,7 +420,7 @@ export function SettingsPanel() {
                         onClick={() => void installAndRestart()}
                       >
                         <RefreshCw className="h-3.5 w-3.5" />
-                        <span>今すぐ再起動して更新</span>
+                        <span>{androidUpdater ? "今すぐインストールして更新" : "今すぐ再起動して更新"}</span>
                       </Button>
                     )}
                     <Button

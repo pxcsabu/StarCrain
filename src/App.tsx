@@ -39,7 +39,11 @@ import { SolarSystem3D } from "@/components/solar3d/SolarSystem3D";
 import { useClockStore } from "@/store/clockStore";
 import { useSkyStore } from "@/store/skyStore";
 import { useThemeStore } from "@/store/themeStore";
-import { useUpdaterStore } from "@/store/updaterStore";
+import {
+  isAndroidUpdaterSupported,
+  isUpdaterSupported,
+  useUpdaterStore,
+} from "@/store/updaterStore";
 import type { ActivePanelId } from "@/types/sky";
 
 function renderPanelBody(id: Exclude<ActivePanelId, null>) {
@@ -143,8 +147,11 @@ export function App() {
   const updaterVersion = useUpdaterStore((s) => s.availableVersion);
   const updaterDismissed = useUpdaterStore((s) => s.dismissed);
   const updaterError = useUpdaterStore((s) => s.errorMessage);
+  const updaterNotice = useUpdaterStore((s) => s.noticeMessage);
   const installAndRestart = useUpdaterStore((s) => s.installAndRestart);
   const dismissUpdateNotification = useUpdaterStore((s) => s.dismissNotification);
+  const updaterSupported = isUpdaterSupported();
+  const androidUpdater = isAndroidUpdaterSupported();
 
   const [dockOverlay, setDockOverlay] = useState<DockOverlayMode>(null);
   const [inspectorOnTop, setInspectorOnTop] = useState(true);
@@ -295,7 +302,7 @@ export function App() {
   }, [clockEngineActive]);
 
   useEffect(() => {
-    if (!isDesktopWindow) return;
+    if (!updaterSupported) return;
     void useUpdaterStore.getState().initVersion();
     const initialTimer = window.setTimeout(() => {
       void useUpdaterStore.getState().checkAndAutoDownload(false);
@@ -307,7 +314,7 @@ export function App() {
       window.clearTimeout(initialTimer);
       window.clearInterval(periodicTimer);
     };
-  }, [isDesktopWindow]);
+  }, [updaterSupported]);
 
   const hasMobileSheet = dockOverlay !== null || activePanel !== null || selectedObject !== null;
 
@@ -437,7 +444,7 @@ export function App() {
       <CommandPalette />
 
       {(activeAlert || (updaterStatus === "ready" && !updaterDismissed) || updaterStatus === "installing") && (
-        <div className="fixed top-16 right-4 z-50 flex max-w-sm flex-col gap-2">
+        <div className="fixed top-16 right-3 left-3 sm:left-auto sm:right-4 z-50 flex sm:max-w-sm flex-col gap-2">
           {((updaterStatus === "ready" && !updaterDismissed) || updaterStatus === "installing") && (
             <div className="starcrane-win-enter liquid-glass-sheet flex items-start gap-2.5 px-3.5 py-2.5 text-xs text-[var(--text-primary)]">
               <RefreshCw
@@ -453,9 +460,16 @@ export function App() {
                 </div>
                 <div className="text-[11px] text-[var(--text-secondary)]">
                   {updaterStatus === "installing"
-                    ? "インストーラーを起動して自動再起動します。"
-                    : "バックグラウンドでダウンロードが完了しました。再起動すると最新版が反映されます。"}
+                    ? androidUpdater
+                      ? "Androidのインストーラーを起動しています。"
+                      : "インストーラーを起動して自動再起動します。"
+                    : androidUpdater
+                      ? "最新APKのダウンロードが完了しました。タップしてインストーラーを起動します。"
+                      : "バックグラウンドでダウンロードが完了しました。再起動すると最新版が反映されます。"}
                 </div>
+                {updaterNotice && (
+                  <div className="text-[10.5px] text-amber-300">{updaterNotice}</div>
+                )}
                 {updaterError && (
                   <div className="text-[10.5px] text-[var(--status-danger)]">{updaterError}</div>
                 )}
@@ -466,7 +480,7 @@ export function App() {
                       onClick={() => void installAndRestart()}
                       className="rounded-full bg-[var(--accent-primary)] px-3 py-1 text-[11px] font-semibold text-[var(--accent-primary-fg)] transition-opacity hover:opacity-90"
                     >
-                      今すぐ再起動して更新
+                      {androidUpdater ? "今すぐインストールして更新" : "今すぐ再起動して更新"}
                     </button>
                     <button
                       type="button"

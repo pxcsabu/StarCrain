@@ -99,7 +99,9 @@ pub fn run() {
             commands::tools::reset_default_satellites_cmd,
             commands::online::sync_mpc_comets_cmd,
             commands::online::sync_celestrak_tle_cmd,
-            commands::online::fetch_open_meteo_weather_cmd
+            commands::online::fetch_open_meteo_weather_cmd,
+            commands::updater::check_android_update_cmd,
+            commands::updater::download_android_update_apk_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running StarCrane Tauri application");
