@@ -105,24 +105,24 @@ export const TopBar = memo(function TopBar() {
   };
 
   return (
-    <header className="pointer-events-none flex flex-nowrap items-center justify-between gap-2">
+    <header className="pointer-events-none flex flex-nowrap items-center justify-between gap-1.5 sm:gap-2">
       {/* Left Capsule: Date/Time + Quick Step */}
-      <div className="liquid-glass-pill pointer-events-auto flex shrink-0 items-center gap-0.5 px-1.5 py-1">
+      <div className="liquid-glass-pill pointer-events-auto flex shrink-0 items-center gap-0.5 px-1 py-1 sm:px-1.5">
         <Button
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8"
+          className="h-7 w-7 sm:h-8 sm:w-8"
           title="-1時間"
           onClick={() => stepTimeMinutes(-60)}
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
         </Button>
 
         <button
           type="button"
           onClick={() => togglePanel("time")}
-          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono-num text-xs transition-colors ${
+          className={`flex items-center gap-1 rounded-full px-1.5 py-1 font-mono-num text-[11px] transition-colors sm:gap-1.5 sm:px-2.5 sm:text-xs ${
             openPanels.includes("time")
               ? "m3-tonal-active font-semibold"
               : "hover:bg-white/10"
@@ -138,18 +138,18 @@ export const TopBar = memo(function TopBar() {
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8"
+          className="h-7 w-7 sm:h-8 sm:w-8"
           title="+1時間"
           onClick={() => stepTimeMinutes(60)}
         >
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
         </Button>
 
         <Button
           type="button"
           size="sm"
           variant="tonal"
-          className="ml-0.5 h-7 px-2.5 text-[11px] font-semibold"
+          className="ml-0.5 h-7 px-2 text-[10.5px] font-semibold sm:px-2.5 sm:text-[11px]"
           onClick={setNow}
         >
           今
@@ -183,11 +183,11 @@ export const TopBar = memo(function TopBar() {
       )}
 
       {/* Right Capsule: Location + Projection + Search + Theme + Settings */}
-      <div className="liquid-glass-pill pointer-events-auto flex min-w-0 items-center gap-1 px-1.5 py-1">
+      <div className="liquid-glass-pill pointer-events-auto flex min-w-0 items-center gap-0.5 px-1 py-1 sm:gap-1 sm:px-1.5">
         <button
           type="button"
           onClick={() => togglePanel("locations")}
-          className={`flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium transition-colors ${
+          className={`flex min-w-0 items-center gap-1 rounded-full px-1.5 py-1 text-[11px] font-medium transition-colors sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-xs ${
             openPanels.includes("locations")
               ? "m3-tonal-active"
               : "hover:bg-white/10"
@@ -195,7 +195,7 @@ export const TopBar = memo(function TopBar() {
           title={location.name_ja}
         >
           <MapPin className="h-3.5 w-3.5 shrink-0 text-[var(--accent-secondary)]" />
-          <span className="max-w-[3.8rem] truncate sm:max-w-[9rem]">{shortLocation}</span>
+          <span className="max-w-[3.1rem] truncate sm:max-w-[9rem]">{shortLocation}</span>
         </button>
 
         <Button
@@ -207,7 +207,7 @@ export const TopBar = memo(function TopBar() {
           disabled={gpsLoading}
           title="GPSで現在地を取得"
         >
-          <LocateFixed className={`h-4 w-4 ${gpsLoading ? "animate-pulse" : ""}`} />
+          <LocateFixed className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${gpsLoading ? "animate-pulse" : ""}`} />
         </Button>
 
         <Button
@@ -218,7 +218,7 @@ export const TopBar = memo(function TopBar() {
           onClick={() => setGyroEnabled(!gyroEnabled)}
           title={gyroEnabled ? "ジャイロ連動を停止" : "ジャイロ・コンパスで向きを合わせる"}
         >
-          <Compass className={`h-4 w-4 ${gyroEnabled ? "text-[var(--tonal-fg)]" : ""}`} />
+          <Compass className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${gyroEnabled ? "text-[var(--tonal-fg)]" : ""}`} />
         </Button>
 
         <select
@@ -242,33 +242,33 @@ export const TopBar = memo(function TopBar() {
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8 shrink-0"
+          className="h-7 w-7 shrink-0 sm:h-8 sm:w-8"
           onClick={() => setCommandPaletteOpen(true)}
           title="検索"
         >
-          <Search className="h-4 w-4" />
+          <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
         </Button>
 
         <Button
           type="button"
           size="icon"
           variant={theme === "night-vision" ? "tonal" : "ghost"}
-          className="h-8 w-8 shrink-0"
+          className="h-7 w-7 shrink-0 sm:h-8 sm:w-8"
           onClick={toggleNightVision}
           title={theme === "night-vision" ? "ダークへ戻す" : "赤色暗順応"}
         >
-          <ThemeIcon className="h-4 w-4" />
+          <ThemeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
         </Button>
 
         <Button
           type="button"
           size="icon"
           variant={openPanels.includes("settings") ? "tonal" : "ghost"}
-          className="hidden h-8 w-8 shrink-0 sm:inline-flex"
+          className="inline-flex h-7 w-7 shrink-0 sm:h-8 sm:w-8"
           onClick={() => togglePanel("settings")}
           title="環境設定"
         >
-          <Settings className="h-4 w-4" />
+          <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
         </Button>
       </div>
 

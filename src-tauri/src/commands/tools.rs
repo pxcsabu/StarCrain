@@ -10,7 +10,7 @@ use crate::engine::coords::{
     Equatorial, angular_distance_deg, apply_standard_refraction, equatorial_j2000_to_galactic,
     equatorial_to_ecliptic, equatorial_to_horizontal, wrap_deg_180, wrap_deg_360,
 };
-use crate::engine::ephemeris::geocentric_to_topocentric;
+use crate::engine::ephemeris::{geocentric_to_topocentric, sun_ephemeris};
 use crate::engine::precession::{
     B1950_JD, J2000_JD, OBLIQUITY_J2000_DEG, b1950_to_j2000, j2000_to_b1950,
     precess_between_epochs,
@@ -785,6 +785,89 @@ pub fn reset_default_satellites_cmd(db: State<'_, CometDb>) -> Result<usize, Str
     db.restore_default_satellites()
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct IssTrackSample {
+    pub jd_ut: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub altitude_km: f64,
+    pub velocity_km_s: f64,
+    pub is_sunlit: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IssEarthViewData {
+    pub jd_ut: f64,
+    pub name: String,
+    pub norad_id: u32,
+    pub current: SatelliteSkyPos,
+    pub subsolar_lat_deg: f64,
+    pub subsolar_lon_deg: f64,
+    pub epoch_age_days: f64,
+    pub track: Vec<IssTrackSample>,
+}
+
+pub fn get_iss_earth_view_impl(
+    req: &SatListRequest,
+    db: &CometDb,
+) -> Result<IssEarthViewData, String> {
+    let sats = db.list_satellites()?;
+    let iss = sats
+        .iter()
+        .find(|s| s.norad_id == 25544 || s.name.to_ascii_uppercase().contains("ISS"))
+        .or_else(|| sats.first())
+        .cloned()
+        .ok_or_else(|| "ISS のTLEデータが見つかりません".to_owned())?;
+
+    let loc = ObserverLocation {
+        lat_deg: req.lat_deg,
+        lon_deg: req.lon_deg,
+        alt_m: req.alt_m,
+        tz_offset_min: req.tz_offset_min,
+    };
+
+    let current = propagate_satellite_at(&iss, req.jd_ut, &loc, req.refraction)?;
+    let sun = sun_ephemeris(ut_to_tt_jd(req.jd_ut));
+    let subsolar_lat_deg = sun.eq_apparent.dec_deg;
+    let subsolar_lon_deg = wrap_deg_180(sun.eq_apparent.ra_deg - gast_deg(req.jd_ut));
+
+    let sample_count = 97usize;
+    let mut track = Vec::with_capacity(sample_count);
+    for i in 0..sample_count {
+        let offset_min = -15.0 + (i as f64 / (sample_count - 1) as f64) * 110.0;
+        let t_jd = req.jd_ut + offset_min / 1440.0;
+        if let Ok(sample) = propagate_satellite_at(&iss, t_jd, &loc, false) {
+            track.push(IssTrackSample {
+                jd_ut: t_jd,
+                lat_deg: sample.subpoint_lat_deg,
+                lon_deg: sample.subpoint_lon_deg,
+                altitude_km: sample.altitude_km,
+                velocity_km_s: sample.velocity_km_s,
+                is_sunlit: sample.is_sunlit,
+            });
+        }
+    }
+
+    Ok(IssEarthViewData {
+        jd_ut: req.jd_ut,
+        name: iss.name,
+        norad_id: iss.norad_id,
+        epoch_age_days: current.epoch_age_days,
+        current,
+        subsolar_lat_deg,
+        subsolar_lon_deg,
+        track,
+    })
+}
+
+#[tauri::command]
+pub fn get_iss_earth_view_cmd(
+    req: SatListRequest,
+    db: State<'_, CometDb>,
+) -> Result<IssEarthViewData, String> {
+    get_iss_earth_view_impl(&req, &db)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -913,5 +996,28 @@ mod tests {
 
         // Check invalid JSON rejection
         assert!(import_comets_json_impl("{invalid", false, &db).is_err());
+    }
+
+    #[test]
+    fn iss_earth_view_propagates_orbit_and_subsolar() {
+        let db = CometDb::open_in_memory().expect("db");
+        let view = get_iss_earth_view_impl(
+            &SatListRequest {
+                jd_ut: calendar_to_jd(2026, 11, 23.25),
+                lat_deg: 34.6431,
+                lon_deg: 134.9972,
+                alt_m: 10.0,
+                tz_offset_min: 540,
+                refraction: true,
+            },
+            &db,
+        )
+        .expect("iss earth view");
+        assert_eq!(view.norad_id, 25544);
+        assert_eq!(view.track.len(), 97);
+        assert!(view.current.altitude_km > 300.0 && view.current.altitude_km < 600.0);
+        assert!(view.current.velocity_km_s > 6.5 && view.current.velocity_km_s < 8.5);
+        assert!(view.subsolar_lat_deg.abs() <= 24.0);
+        assert!(view.subsolar_lon_deg.abs() <= 180.0);
     }
 }

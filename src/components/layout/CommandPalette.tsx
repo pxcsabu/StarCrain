@@ -186,6 +186,16 @@ export function CommandPalette() {
         },
       },
       {
+        key: "act-iss-view",
+        title: "ISS リアルタイム地球ビューを開く",
+        subtitle: "ISS窓(キューポラ)・直下・3D軌道から昼夜・雲・大気と実時間軌道を観察",
+        badge: "ISS",
+        run: () => {
+          st.setActivePanel("iss_view");
+          setOpen(false);
+        },
+      },
+      {
         key: "act-eclipses",
         title: "食現象検索 (日食・月食・日面通過・星食)",
         subtitle: "2026〜2035年 日食・月食・水星日面通過・星食シミュレーション",

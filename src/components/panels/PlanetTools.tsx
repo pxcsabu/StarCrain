@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  Box,
   ChevronLeft,
   ChevronRight,
   Compass,
@@ -122,6 +123,7 @@ export function PlanetTools() {
   const setPlanetTrack = useSkyStore((s) => s.setPlanetTrack);
   const clearPlanetTracks = useSkyStore((s) => s.clearPlanetTracks);
   const setActivePanel = useSkyStore((s) => s.setActivePanel);
+  const openPlanet3d = useSkyStore((s) => s.openPlanet3d);
 
   const [tab, setTab] = useState<PlanetToolTab>("info");
 
@@ -764,21 +766,31 @@ export function PlanetTools() {
                     </div>
                   )}
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 w-full gap-1 text-[11px]"
-                    onClick={() =>
-                      centerOnSkyCoords(
-                        appearance.ra_deg,
-                        appearance.dec_deg,
-                        appearance.az_deg,
-                        appearance.alt_deg,
-                      )
-                    }
-                  >
-                    <Compass className="h-3 w-3" /> 星図でこの天体を中央表示
-                  </Button>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-full gap-1 text-[11px]"
+                      onClick={() =>
+                        centerOnSkyCoords(
+                          appearance.ra_deg,
+                          appearance.dec_deg,
+                          appearance.az_deg,
+                          appearance.alt_deg,
+                        )
+                      }
+                    >
+                      <Compass className="h-3 w-3" /> 中央表示
+                    </Button>
+                    <Button
+                      variant="tonal"
+                      size="sm"
+                      className="h-7 w-full gap-1 text-[11px] font-semibold"
+                      onClick={() => openPlanet3d(appearance.id)}
+                    >
+                      <Box className="h-3 w-3" /> 3Dモデルを見る
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}

@@ -207,11 +207,11 @@ function computeVisualRadius(b: SolarSystem3DBody): number {
   return Math.max(0.16, b.radius_hint * 0.31);
 }
 
-export function createDetailedBodyObject(
-  b: SolarSystem3DBody,
+function buildPlanetObjectWithRadius(
+  b: { id: string; kind: string; color: string },
+  r: number,
   maxAnisotropy: number,
 ): AnimatedSolarBodyHandle {
-  const r = computeVisualRadius(b);
   const group = new THREE.Group();
 
   if (b.id === "sun") {
@@ -420,4 +420,34 @@ export function createDetailedBodyObject(
     spinTarget: dwarfMesh,
     spinRateRadPerSec: 0.14,
   };
+}
+
+export function createDetailedBodyObject(
+  b: SolarSystem3DBody,
+  maxAnisotropy: number,
+): AnimatedSolarBodyHandle {
+  return buildPlanetObjectWithRadius(b, computeVisualRadius(b), maxAnisotropy);
+}
+
+const STANDALONE_COLORS: Record<string, string> = {
+  pluto: "#e7cbb3",
+  eris: "#dbeafe",
+};
+
+export function createStandalonePlanetModel(
+  bodyId: string,
+  maxAnisotropy: number,
+  radius = 2.0,
+): AnimatedSolarBodyHandle {
+  const id = bodyId.toLowerCase();
+  const kind =
+    id === "sun"
+      ? "star"
+      : id === "moon"
+        ? "moon"
+        : id === "pluto" || id === "eris"
+          ? "dwarf_planet"
+          : "planet";
+  const color = STANDALONE_COLORS[id] ?? "#d6d3d1";
+  return buildPlanetObjectWithRadius({ id, kind, color }, radius, maxAnisotropy);
 }

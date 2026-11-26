@@ -1473,11 +1473,13 @@ function drawMoonPhase(
     }
   }
 
-  // Screen rotation angle for lunar North up (-y = celestial North)
+  // Smooth cubic fade-in of lunar surface texture across r = 8.5..26 px (no sudden pop-in)
+  const tMoon = zoomTextures && !isInverted ? Math.max(0, Math.min(1, (r - 8.5) / 17.5)) : 0;
+  const texBlend = tMoon * tMoon * (3 - 2 * tMoon);
+  const computeNorthRot = zoomTextures && !isInverted && r >= 8.5;
   let northRot = 0;
-  const showTex = zoomTextures && r >= 13 && !isInverted;
   if (
-    showTex &&
+    computeNorthRot &&
     projectJ2000RaDec(
       moon.ra_deg,
       Math.min(89.9, moon.dec_deg + 0.5),
@@ -1496,10 +1498,12 @@ function drawMoonPhase(
     }
   }
 
-  const lunarTex = showTex
-    ? getPlanetDiskPhotoCanvas("moon", nightVision, onTextureLoaded) ??
-      getLunarTextureCanvas(nightVision)
-    : null;
+  // Pre-warm moon texture smoothly as soon as r >= 5.5
+  const lunarTex =
+    zoomTextures && !isInverted && r >= 5.5
+      ? getPlanetDiskPhotoCanvas("moon", nightVision, onTextureLoaded) ??
+        getLunarTextureCanvas(nightVision)
+      : null;
 
   c.save();
   c.translate(mx, my);
@@ -1510,10 +1514,10 @@ function drawMoonPhase(
   c.arc(0, 0, r, 0, Math.PI * 2);
   c.fill();
 
-  if (lunarTex) {
+  if (lunarTex && texBlend > 0.01) {
     c.save();
     c.rotate(northRot);
-    c.globalAlpha = 0.16;
+    c.globalAlpha = 0.16 * texBlend;
     c.drawImage(lunarTex, -r, -r, r * 2, r * 2);
     c.restore();
   }
@@ -1536,16 +1540,18 @@ function drawMoonPhase(
   c.fillStyle = nightVision ? "#dc2626" : "#f8efc8";
   c.fill();
 
-  if (lunarTex) {
+  if (lunarTex && texBlend > 0.01) {
     c.clip();
     c.rotate(northRot - (sunAngle + Math.PI / 2));
-    c.globalAlpha = 0.94;
+    c.globalAlpha = 0.95 * texBlend;
     c.drawImage(lunarTex, -r, -r, r * 2, r * 2);
   }
   c.restore();
 
-  // Selenographic lunar maria & crater labels when zoomed into the Moon
-  if (lunarLabels && r >= 32) {
+  // Selenographic lunar maria & crater labels fade in smoothly over r = 30..48
+  if (lunarLabels && r >= 30) {
+    const tLbl = Math.max(0, Math.min(1, (r - 30) / 18));
+    const lblFade = tLbl * tLbl * (3 - 2 * tLbl);
     const uxSun = Math.cos(sunAngle);
     const uySun = Math.sin(sunAngle);
     const threshold = 1 - 2 * k - 0.08;
@@ -1565,7 +1571,7 @@ function drawMoonPhase(
 
       const uSun = (proj.x * uxSun + proj.y * uySun) / r;
       const isLit = k >= 0.96 || uSun >= threshold;
-      const alpha = isLit ? 0.94 : 0.34;
+      const alpha = (isLit ? 0.94 : 0.34) * lblFade;
       const tw = c.measureText(feat.nameJa).width + 6;
       const th = fontSize + 4;
       const ly = proj.y - (feat.kind === "mare" ? 0 : 7);
@@ -1653,15 +1659,17 @@ function drawPlanetOrSun(
   const style = palette[body.id] ?? { fill: "#ffffff", radius: 4.2 };
 
   const trueR = (body.angular_diameter_arcsec / 7200) * pxPerDeg;
-  const boost = zoomTextures && body.id !== "sun" && effFov < 18
-    ? effFov < 12
-      ? 1 + (12 - effFov) * 0.2
+  const boost = zoomTextures && body.id !== "sun" && effFov < 24
+    ? effFov < 14
+      ? 1 + (14 - effFov) * 0.25
       : 1
     : 1;
   const r = zoomTextures && body.id !== "sun"
     ? Math.max(style.radius, Math.min(72, trueR * boost))
     : style.radius;
-  const detailed = zoomTextures && r >= 8.5;
+  const detailed = zoomTextures && r >= 6.0;
+  const tPlanet = zoomTextures ? Math.max(0, Math.min(1, (r - 4.4) / 6.5)) : 0;
+  const texBlend = tPlanet * tPlanet * (3 - 2 * tPlanet);
 
   c.save();
   if (body.id === "sun") {
@@ -1679,14 +1687,16 @@ function drawPlanetOrSun(
     c.beginPath();
     c.arc(x, y, sr, 0, Math.PI * 2);
     c.fill();
-    if (zoomTextures && sr >= 14) {
+    if (zoomTextures && sr >= 11) {
       const sunTex = getPlanetDiskPhotoCanvas("sun", nightVision, onTextureLoaded);
       if (sunTex) {
+        const tSun = Math.max(0, Math.min(1, (sr - 10) / 14));
+        const sunBlend = tSun * tSun * (3 - 2 * tSun);
         c.save();
         c.beginPath();
         c.arc(x, y, sr, 0, Math.PI * 2);
         c.clip();
-        c.globalAlpha = 0.92;
+        c.globalAlpha = 0.94 * sunBlend;
         c.drawImage(sunTex, x - sr, y - sr, sr * 2, sr * 2);
         c.restore();
       }
@@ -1702,6 +1712,8 @@ function drawPlanetOrSun(
   c.beginPath();
   c.arc(x, y, r * 2.1, 0, Math.PI * 2);
   c.fill();
+
+  const diskTex = zoomTextures ? getPlanetDiskPhotoCanvas(body.id, nightVision, onTextureLoaded) : null;
 
   if (body.id === "saturn") {
     const tiltRad = ((body.saturn_ring_tilt_deg ?? 12) * Math.PI) / 180;
@@ -1728,13 +1740,21 @@ function drawPlanetOrSun(
     }
     c.restore();
 
-    // Saturn globe
+    // Saturn globe with real photographic bands inside rings
     c.save();
     c.beginPath();
-    c.arc(x, y, r, 0, Math.PI * 2);
+    c.ellipse(x, y, r, r * 0.902, -0.32, 0, Math.PI * 2);
     c.fillStyle = style.fill;
     c.fill();
-    if (detailed) {
+    if (detailed && diskTex && texBlend > 0.01) {
+      c.save();
+      c.clip();
+      c.translate(x, y);
+      c.rotate(-0.32);
+      c.globalAlpha = 0.95 * texBlend;
+      c.drawImage(diskTex, -r, -r * 0.902, r * 2, r * 1.804);
+      c.restore();
+    } else if (detailed) {
       c.clip();
       c.translate(x, y);
       c.rotate(-0.32);
@@ -1766,71 +1786,8 @@ function drawPlanetOrSun(
     return r;
   }
 
-  if (detailed && (body.id === "jupiter" || body.id === "mars" || body.id === "uranus" || body.id === "neptune")) {
-    const ry = body.id === "jupiter" ? r * 0.935 : r;
-    const diskTex = getPlanetDiskPhotoCanvas(body.id, nightVision, onTextureLoaded);
-    if (diskTex) {
-      c.save();
-      c.beginPath();
-      c.ellipse(x, y, r, ry, 0, 0, Math.PI * 2);
-      c.clip();
-      c.drawImage(diskTex, x - r, y - ry, r * 2, ry * 2);
-      const limb = c.createRadialGradient(x - r * 0.2, y - ry * 0.2, r * 0.35, x, y, r);
-      limb.addColorStop(0, "rgba(0,0,0,0)");
-      limb.addColorStop(1, "rgba(0,0,0,0.34)");
-      c.fillStyle = limb;
-      c.fillRect(x - r, y - ry, r * 2, ry * 2);
-      c.restore();
-      c.restore();
-      return r;
-    }
-  }
-
-  if (detailed && body.id === "jupiter") {
-    c.save();
-    c.beginPath();
-    c.ellipse(x, y, r, r * 0.94, 0, 0, Math.PI * 2);
-    c.fillStyle = nightVision ? "#dc2626" : "#f5e3c6";
-    c.fill();
-    c.clip();
-    // Cloud zones & NEB/SEB bands + Great Red Spot
-    c.fillStyle = nightVision ? "rgba(127, 29, 29, 0.65)" : "rgba(176, 114, 72, 0.68)";
-    c.fillRect(x - r, y - r * 0.34, r * 2, r * 0.18);
-    c.fillRect(x - r, y + r * 0.14, r * 2, r * 0.2);
-    c.fillStyle = nightVision ? "rgba(95, 16, 16, 0.45)" : "rgba(155, 130, 102, 0.45)";
-    c.fillRect(x - r, y - r * 0.72, r * 2, r * 0.16);
-    c.fillRect(x - r, y + r * 0.54, r * 2, r * 0.16);
-    c.fillStyle = nightVision ? "rgba(248, 113, 113, 0.8)" : "rgba(212, 92, 58, 0.85)";
-    c.beginPath();
-    c.ellipse(x + r * 0.28, y + r * 0.24, r * 0.22, r * 0.13, 0, 0, Math.PI * 2);
-    c.fill();
-    c.restore();
-    c.restore();
-    return r;
-  }
-
-  if (detailed && body.id === "mars") {
-    c.save();
-    c.beginPath();
-    c.arc(x, y, r, 0, Math.PI * 2);
-    c.fillStyle = style.fill;
-    c.fill();
-    c.clip();
-    // Dark Syrtis Major basalt region & white polar ice cap
-    c.fillStyle = nightVision ? "rgba(100, 12, 12, 0.62)" : "rgba(120, 48, 32, 0.52)";
-    c.beginPath();
-    c.ellipse(x - r * 0.12, y + r * 0.1, r * 0.44, r * 0.26, -0.3, 0, Math.PI * 2);
-    c.fill();
-    c.fillStyle = nightVision ? "rgba(254, 202, 202, 0.78)" : "rgba(248, 250, 252, 0.85)";
-    c.beginPath();
-    c.ellipse(x, y - r * 0.82, r * 0.34, r * 0.14, 0, 0, Math.PI * 2);
-    c.fill();
-    c.restore();
-    c.restore();
-    return r;
-  }
-
-  if (detailed && (body.id === "venus" || body.id === "mercury")) {
+  // Phase planets (Mercury & Venus) with real photo textures clipped to sunlit phase
+  if (body.id === "venus" || body.id === "mercury") {
     let sunAng = -Math.PI * 0.5;
     if (sun) {
       const sPt =
@@ -1860,15 +1817,34 @@ function drawPlanetOrSun(
     }
     c.closePath();
     c.fill();
+    if (diskTex && texBlend > 0.01) {
+      c.save();
+      c.clip();
+      c.rotate(-(sunAng + Math.PI * 0.5));
+      c.globalAlpha = 0.94 * texBlend;
+      c.drawImage(diskTex, -r, -r, r * 2, r * 2);
+      c.restore();
+    }
     c.restore();
     c.restore();
     return r;
   }
 
+  // Mars, Jupiter, Uranus, Neptune, Pluto, Eris: real spherical textures with smooth crossfade
+  const ry = body.id === "jupiter" ? r * 0.935 : r;
   c.fillStyle = style.fill;
   c.beginPath();
-  c.arc(x, y, r, 0, Math.PI * 2);
+  c.ellipse(x, y, r, ry, 0, 0, Math.PI * 2);
   c.fill();
+  if (diskTex && texBlend > 0.01) {
+    c.save();
+    c.beginPath();
+    c.ellipse(x, y, r, ry, 0, 0, Math.PI * 2);
+    c.clip();
+    c.globalAlpha = 0.96 * texBlend;
+    c.drawImage(diskTex, x - r, y - ry, r * 2, ry * 2);
+    c.restore();
+  }
   c.restore();
   return r;
 }
@@ -2154,7 +2130,7 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
             skyPCtx,
             panel,
             isChart,
-            false,
+            refractionEnabled,
             false,
             out,
             0,
@@ -2435,9 +2411,10 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
           }
         }
 
-        const realSprite = !isInverted && isShowcase
-          ? getRealDsoSkySprite(dso, nightVision, onTextureLoaded)
-          : null;
+        const realSprite =
+          !isInverted && !hipsConfig.enabled && isShowcase
+            ? getRealDsoSkySprite(dso, nightVision, onTextureLoaded)
+            : null;
         const texKey = selectDsoTextureKey(dso);
         const isEdgeOnSprite = texKey === "M104";
         const paRad = -((dso.pos_ang_deg ?? 25) * DEG2RAD);

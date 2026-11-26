@@ -35,6 +35,8 @@ import { SettingsPanel } from "@/components/panels/SettingsPanel";
 import { SimulationControl } from "@/components/panels/SimulationControl";
 import { TimeControl } from "@/components/panels/TimeControl";
 import { VariableStars } from "@/components/panels/VariableStars";
+import { IssEarthView } from "@/components/solar3d/IssEarthView";
+import { Planet3DViewerModal } from "@/components/solar3d/Planet3DViewerModal";
 import { SolarSystem3D } from "@/components/solar3d/SolarSystem3D";
 import { useClockStore } from "@/store/clockStore";
 import { useSkyStore } from "@/store/skyStore";
@@ -63,6 +65,8 @@ function renderPanelBody(id: Exclude<ActivePanelId, null>) {
       return <PlanetTools />;
     case "solar3d":
       return <SolarSystem3D />;
+    case "iss_view":
+      return <IssEarthView />;
     case "eclipses":
       return <EclipseFinder />;
     case "comets":
@@ -429,7 +433,8 @@ export function App() {
               type="button"
               aria-label="閉じる"
               onClick={dismissMobileSheets}
-              className="starcrane-fade-enter pointer-events-auto fixed inset-0 z-0 bg-black/25 sm:hidden"
+              className="starcrane-fade-enter pointer-events-auto fixed inset-0 z-0 bg-black/45 backdrop-blur-md sm:hidden"
+              style={{ WebkitBackdropFilter: "blur(12px)" }}
             />
           )}
 
@@ -466,6 +471,7 @@ export function App() {
         <MobileBottomNav overlay={dockOverlay} setOverlay={setDockOverlay} />
       </div>
 
+      <Planet3DViewerModal />
       <CommandPalette />
 
       {(activeAlert ||

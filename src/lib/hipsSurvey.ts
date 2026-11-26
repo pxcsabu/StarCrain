@@ -641,18 +641,20 @@ export function drawHipsSurveyLayer(args: DrawHipsLayerArgs): number {
       tile.order === 0
         ? 8
         : tile.order === 1
-          ? 5
+          ? 6
           : tile.order === 2
-            ? 3
-            : tile.order <= 4
-              ? 2
-              : 1;
+            ? 4
+            : tile.order === 3
+              ? 3
+              : tile.order === 4
+                ? 2
+                : 1;
     const stride = sub + 1;
     const nside = 1 << tile.order;
 
     for (let i = 0; i <= sub; i++) {
       const v = i / sub;
-      const fx = 1 - v;
+      const fx = v;
       for (let j = 0; j <= sub; j++) {
         const u = j / sub;
         const fy = u;
@@ -672,8 +674,8 @@ export function drawHipsSurveyLayer(args: DrawHipsLayerArgs): number {
     for (let i = 0; i < sub; i++) {
       const v0 = i / sub;
       const v1 = (i + 1) / sub;
-      const fx0 = 1 - v0;
-      const fx1 = 1 - v1;
+      const fx0 = v0;
+      const fx1 = v1;
       for (let j = 0; j < sub; j++) {
         const u0 = j / sub;
         const u1 = (j + 1) / sub;
@@ -685,11 +687,11 @@ export function drawHipsSurveyLayer(args: DrawHipsLayerArgs): number {
         const i01 = (i + 1) * stride + j;
         const i11 = (i + 1) * stride + (j + 1);
 
-        // Map local (fx, fy) -> ancestor image coordinates (pxU, pxV)
+        // Map local (fx, fy) -> ancestor image coordinates (pxU, pxV); empirically verified u=fy, v=fx
         const ancU0 = ((found.localIy + fy0) / found.scale) * tw;
         const ancU1 = ((found.localIy + fy1) / found.scale) * tw;
-        const ancV0 = (1 - (found.localIx + fx0) / found.scale) * th;
-        const ancV1 = (1 - (found.localIx + fx1) / found.scale) * th;
+        const ancV0 = ((found.localIx + fx0) / found.scale) * th;
+        const ancV1 = ((found.localIx + fx1) / found.scale) * th;
 
         // Triangle 1: (00, 10, 11)
         if (gridOk[i00] && gridOk[i10] && gridOk[i11]) {

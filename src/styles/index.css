@@ -153,7 +153,7 @@
   }
   100% {
     opacity: 1;
-    transform: scale(1) translate3d(0, 0, 0);
+    transform: none;
   }
 }
 
@@ -175,7 +175,7 @@
   }
   100% {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: none;
   }
 }
 
@@ -189,7 +189,7 @@
 }
 
 .starcrane-win-enter {
-  animation: starcrane-win-in 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: starcrane-win-in 170ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 .starcrane-win-exit {
@@ -198,7 +198,7 @@
 }
 
 .starcrane-sheet-enter {
-  animation: starcrane-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: starcrane-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 .starcrane-fade-enter {
@@ -266,12 +266,31 @@
 }
 
 @media (max-width: 639px) {
+  .liquid-glass-sheet,
+  .liquid-glass-pill {
+    background: rgba(8, 13, 28, 0.78);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+  }
+
+  [data-theme="night-vision"] .liquid-glass-sheet,
+  [data-theme="night-vision"] .liquid-glass-pill {
+    background: rgba(20, 3, 3, 0.86);
+  }
+
   .starcrane-panel-host > * {
     width: 100% !important;
     max-width: 100% !important;
     height: auto !important;
     max-height: 68dvh !important;
     border-radius: 28px 28px 20px 20px !important;
+    background: rgba(8, 13, 28, 0.82) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(160%) !important;
+    backdrop-filter: blur(20px) saturate(160%) !important;
+  }
+
+  [data-theme="night-vision"] .starcrane-panel-host > * {
+    background: rgba(20, 3, 3, 0.88) !important;
   }
 }
 

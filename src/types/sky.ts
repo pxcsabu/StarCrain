@@ -688,6 +688,7 @@ export type ActivePanelId =
   | "meteors"
   | "planets"
   | "solar3d"
+  | "iss_view"
   | "eclipses"
   | "comets"
   | "variables"
@@ -1397,6 +1398,26 @@ export interface SatelliteSkyPos {
   is_sunlit: boolean;
   is_visible: boolean;
   epoch_age_days: number;
+}
+
+export interface IssTrackSample {
+  jd_ut: number;
+  lat_deg: number;
+  lon_deg: number;
+  altitude_km: number;
+  velocity_km_s: number;
+  is_sunlit: boolean;
+}
+
+export interface IssEarthViewData {
+  jd_ut: number;
+  name: string;
+  norad_id: number;
+  current: SatelliteSkyPos;
+  subsolar_lat_deg: number;
+  subsolar_lon_deg: number;
+  epoch_age_days: number;
+  track: IssTrackSample[];
 }
 
 export interface SatellitePassPoint {

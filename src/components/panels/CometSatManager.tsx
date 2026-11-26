@@ -1036,6 +1036,17 @@ export function CometSatManager() {
               <Button
                 type="button"
                 size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-[11px]"
+                onClick={() => setActivePanel("iss_view")}
+                title="ISSの視点からリアルタイムで地球を観察"
+              >
+                <Globe className="h-3.5 w-3.5 text-sky-400" />
+                ISS地球視点
+              </Button>
+              <Button
+                type="button"
+                size="sm"
                 variant="ghost"
                 className="h-7 w-7 p-0"
                 onClick={() => {

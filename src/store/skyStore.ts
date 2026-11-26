@@ -404,6 +404,7 @@ export interface SkyState {
   landscapeConfig: LandscapeConfig;
   landscapeVersion: number;
   hipsConfig: HipsSurveyConfig;
+  planet3dBodyId: string | null;
   altitudeTargets: AltitudeTargetItem[];
 
   // Planet Analysis Tracks (Phase 5)
@@ -507,6 +508,7 @@ export interface SkyState {
   bumpLandscapeVersion: () => void;
   setHipsConfig: (patch: Partial<HipsSurveyConfig>) => void;
   toggleHipsEnabled: () => void;
+  openPlanet3d: (bodyId: string | null) => void;
   addAltitudeTarget: (item: Omit<AltitudeTargetItem, "color"> & { color?: string }) => void;
   removeAltitudeTarget: (id: string) => void;
   clearAltitudeTargets: () => void;
@@ -613,6 +615,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   landscapeConfig: loadLandscapeConfig(),
   landscapeVersion: 0,
   hipsConfig: loadHipsConfig(),
+  planet3dBodyId: null,
   altitudeTargets: DEFAULT_ALTITUDE_TARGETS,
   planetTracks: {},
   comets: [],
@@ -1467,6 +1470,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       persistHipsConfig(next);
       return { hipsConfig: next };
     }),
+  openPlanet3d: (planet3dBodyId) => set({ planet3dBodyId }),
   addAltitudeTarget: (item) =>
     set((s) => {
       if (s.altitudeTargets.some((t) => t.id === item.id)) {

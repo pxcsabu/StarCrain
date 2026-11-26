@@ -621,7 +621,85 @@ export function getRealDsoSkySprite(
   return null;
 }
 
-const PLANET_DISK_PHOTO_IDS = new Set(["sun", "moon", "mars", "jupiter", "uranus", "neptune"]);
+const PLANET_DISK_PHOTO_IDS = new Set([
+  "sun",
+  "moon",
+  "mercury",
+  "venus",
+  "mars",
+  "jupiter",
+  "saturn",
+  "uranus",
+  "neptune",
+  "pluto",
+  "eris",
+]);
+
+const EQUIRECT_PLANET_TEXTURE_MAP: Record<string, string> = {
+  mercury: "/textures/planets/mercury.jpg",
+  venus: "/textures/planets/venus.jpg",
+  mars: "/textures/planets/mars.jpg",
+  jupiter: "/textures/planets/jupiter.jpg",
+  saturn: "/textures/planets/saturn.jpg",
+  uranus: "/textures/planets/uranus.jpg",
+  neptune: "/textures/planets/neptune.jpg",
+  sun: "/textures/planets/sun.jpg",
+};
+
+function buildSphereDiskFromEquirect(img: HTMLImageElement, bodyId: string): HTMLCanvasElement {
+  const size = 256;
+  const r = size * 0.5;
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = w;
+  srcCanvas.height = h;
+  const sCtx = srcCanvas.getContext("2d");
+
+  const out = document.createElement("canvas");
+  out.width = size;
+  out.height = size;
+  const ctx = out.getContext("2d");
+  if (!ctx || !sCtx || w < 8 || h < 8) return out;
+
+  sCtx.drawImage(img, 0, 0);
+  const srcData = sCtx.getImageData(0, 0, w, h).data;
+  const outImg = ctx.createImageData(size, size);
+  const dst = outImg.data;
+  const lonOffset = bodyId === "jupiter" ? 0.18 : bodyId === "mars" ? 0.35 : 0.1;
+
+  for (let py = 0; py < size; py++) {
+    const ny = (py + 0.5 - r) / (r - 1.5);
+    for (let px = 0; px < size; px++) {
+      const nx = (px + 0.5 - r) / (r - 1.5);
+      const rSq = nx * nx + ny * ny;
+      const oIdx = (py * size + px) * 4;
+      if (rSq > 1.0) {
+        dst[oIdx + 3] = 0;
+        continue;
+      }
+      const nz = Math.sqrt(Math.max(0, 1.0 - rSq));
+      // Spherical UV (central meridian facing viewer + slight 3D foreshortening)
+      const u = ((Math.atan2(nx, nz) / (Math.PI * 2) + 0.5 + lonOffset) % 1 + 1) % 1;
+      const v = Math.asin(Math.max(-1, Math.min(1, ny))) / Math.PI + 0.5;
+      const sx = Math.min(w - 1, Math.max(0, Math.floor(u * (w - 1))));
+      const sy = Math.min(h - 1, Math.max(0, Math.floor(v * (h - 1))));
+      const sIdx = (sy * w + sx) * 4;
+
+      // Soft limb darkening (flat for Sun) and anti-aliased edge
+      const limb = bodyId === "sun" ? 0.85 + 0.15 * Math.pow(nz, 0.35) : 0.42 + 0.58 * Math.pow(nz, 0.45);
+      const edgeDist = Math.sqrt(rSq);
+      const aa = edgeDist > 0.98 ? Math.max(0, (1.0 - edgeDist) / 0.02) : 1.0;
+
+      dst[oIdx] = Math.min(255, Math.round(srcData[sIdx] * limb));
+      dst[oIdx + 1] = Math.min(255, Math.round(srcData[sIdx + 1] * limb));
+      dst[oIdx + 2] = Math.min(255, Math.round(srcData[sIdx + 2] * limb));
+      dst[oIdx + 3] = Math.round(255 * aa);
+    }
+  }
+  ctx.putImageData(outImg, 0, 0);
+  return out;
+}
 
 function buildTightPlanetDiskCanvas(img: HTMLImageElement): HTMLCanvasElement {
   const size = 256;
@@ -698,14 +776,21 @@ export function getPlanetDiskPhotoCanvas(
   const cached = planetDiskNormal.get(key);
   if (cached) return cached;
 
-  const meta = getBundledPhotoMeta(key);
+  const equirectSrc = EQUIRECT_PLANET_TEXTURE_MAP[key];
+  const photoKey = key === "eris" ? "pluto" : key;
+  const meta = equirectSrc
+    ? { src: equirectSrc }
+    : getBundledPhotoMeta(photoKey);
   if (!meta) return null;
 
   if (!planetDiskLoading.has(key)) {
     planetDiskLoading.add(key);
     const img = new Image();
     img.onload = () => {
-      planetDiskNormal.set(key, buildTightPlanetDiskCanvas(img));
+      planetDiskNormal.set(
+        key,
+        equirectSrc ? buildSphereDiskFromEquirect(img, key) : buildTightPlanetDiskCanvas(img),
+      );
       planetDiskLoading.delete(key);
       onLoaded?.();
     };

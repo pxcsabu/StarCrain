@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  Box,
   Clock,
   Compass,
   Crosshair,
@@ -346,6 +347,7 @@ export function ObjectInspector() {
   const jumpToJdUt = useSkyStore((s) => s.jumpToJdUt);
   const addAltitudeTarget = useSkyStore((s) => s.addAltitudeTarget);
   const openPanel = useSkyStore((s) => s.openPanel);
+  const openPlanet3d = useSkyStore((s) => s.openPlanet3d);
 
   const enriched = useMemo(() => {
     if (!selectedObject) {
@@ -457,6 +459,22 @@ export function ObjectInspector() {
           body={enriched.body}
           size="lg"
         />
+
+        {(selectedObject.kind === "planet" ||
+          selectedObject.kind === "dwarf_planet" ||
+          selectedObject.kind === "moon" ||
+          selectedObject.kind === "sun") && (
+          <Button
+            type="button"
+            variant="tonal"
+            size="sm"
+            className="h-8 w-full gap-1.5 text-[11px] font-semibold"
+            onClick={() => openPlanet3d(selectedObject.id)}
+          >
+            <Box className="h-3.5 w-3.5" />
+            <span>3Dモデルを見る</span>
+          </Button>
+        )}
 
         {/* Quick Actions */}
         <div className="grid grid-cols-2 gap-1.5">

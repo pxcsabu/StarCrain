@@ -98,6 +98,7 @@ pub fn run() {
             commands::tools::set_satellite_enabled_cmd,
             commands::tools::delete_satellite_cmd,
             commands::tools::reset_default_satellites_cmd,
+            commands::tools::get_iss_earth_view_cmd,
             commands::online::sync_mpc_comets_cmd,
             commands::online::sync_celestrak_tle_cmd,
             commands::online::fetch_open_meteo_weather_cmd,

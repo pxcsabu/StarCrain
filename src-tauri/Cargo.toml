@@ -1,6 +1,6 @@
 [package]
 name = "starcrane"
-version = "0.2.1"
+version = "0.3.0"
 description = "StarCrane — Modern Rust Planetarium & Astronomical Suite"
 authors = ["StarCrane Developers"]
 edition = "2024"
