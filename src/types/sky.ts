@@ -1654,7 +1654,7 @@ export interface LandscapeConfig {
 }
 
 export const DEFAULT_LANDSCAPE_CONFIG: LandscapeConfig = {
-  preset: "mountain",
+  preset: "veil",
   use3dTerrain: true,
   azOffsetDeg: 0,
   altOffsetDeg: 0,

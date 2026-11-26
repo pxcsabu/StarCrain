@@ -10,6 +10,15 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_ENTRIES: ChangelogRelease[] = [
   {
+    version: "0.4.2",
+    date: "2026-11-27",
+    kind: "fix",
+    title: "デフォルト地平線風景を「ベール」へ変更",
+    items: [
+      "初回起動時・未設定時のデフォルト地平線風景プリセットを「ベール」に戻しました（表示設定の「風景」から山岳・海岸・天文台・砂漠の3D地形への切り替えは引き続き利用できます）",
+    ],
+  },
+  {
     version: "0.4.1",
     date: "2026-11-27",
     kind: "fix",
