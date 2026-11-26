@@ -249,7 +249,7 @@ pub fn compute_sky_palette(input: &SkyColorInput) -> SkyPalette {
         _ => 1.22,
     };
 
-    let (mut zenith, mut mid_sky, mut horizon, mut ground, mut horizon_line) =
+    let (mut zenith, mut mid_sky, mut horizon, ground, horizon_line) =
         base_solar_sky(input.sun_alt_deg);
 
     if input.realism_level == 1 {
@@ -260,18 +260,8 @@ pub fn compute_sky_palette(input: &SkyColorInput) -> SkyPalette {
         horizon = lerp_rgb(chart_hor, horizon, 0.65);
     }
 
-    // Light pollution: strongest at night, suppressed in daytime
+    // Night factor: suppresses moonlight wash during daytime
     let night_factor = 1.0 - smoothstep(-8.0, 6.0, input.sun_alt_deg);
-    let lp_raw = smoothstep(7.0, 2.6, input.limiting_mag);
-    let lp_eff = clamp01(lp_raw * night_factor * (0.45 + 0.55 * realism_scale.min(1.15)));
-
-    let urban_zen = Rgb::new(28, 34, 53);
-    let urban_mid = Rgb::new(39, 44, 60);
-    let urban_hor = Rgb::new(62, 54, 46);
-    zenith = lerp_rgb(zenith, urban_zen, lp_eff * 0.85);
-    mid_sky = lerp_rgb(mid_sky, urban_mid, lp_eff * 0.90);
-    horizon = lerp_rgb(horizon, urban_hor, lp_eff * 0.95);
-    horizon_line = lerp_rgb(horizon_line, Rgb::new(96, 84, 72), lp_eff * 0.65);
 
     // Moonlight sky veil & halo
     let moon_illum = clamp01(input.moon_illuminated_fraction).powf(1.55);
@@ -305,8 +295,6 @@ pub fn compute_sky_palette(input: &SkyColorInput) -> SkyPalette {
     let raw_vis = (1.0 - 0.98 * daylight_fade) * (1.0 - moon_fade);
     let star_visibility_factor = clamp01(lerp(1.0, raw_vis, (realism_scale * 0.85).min(1.0)));
 
-    ground = lerp_rgb(ground, Rgb::new(14, 18, 22), lp_eff * 0.45);
-
     let palette = SkyPalette {
         zenith,
         mid_sky,
@@ -317,8 +305,8 @@ pub fn compute_sky_palette(input: &SkyColorInput) -> SkyPalette {
         anti_solar_strength,
         moonlight_glow: Rgb::new(142, 174, 224),
         moonlight_strength,
-        light_pollution: Rgb::new(168, 120, 74),
-        light_pollution_strength: clamp01(lp_eff),
+        light_pollution: Rgb::new(0, 0, 0),
+        light_pollution_strength: 0.0,
         ground,
         horizon_line,
         star_visibility_factor,
@@ -375,8 +363,18 @@ mod tests {
     }
 
     #[test]
-    fn urban_light_pollution_and_moonlight_brighten_night_sky() {
-        let rural = compute_sky_palette(&SkyColorInput {
+    fn limiting_mag_does_not_tint_sky_and_moonlight_brightens_night() {
+        let dark_low_mag = compute_sky_palette(&SkyColorInput {
+            sun_alt_deg: -35.0,
+            sun_az_deg: 0.0,
+            moon_alt_deg: -25.0,
+            moon_az_deg: 0.0,
+            moon_illuminated_fraction: 0.0,
+            limiting_mag: 2.0,
+            realism_level: 2,
+            night_vision: false,
+        });
+        let dark_mid_mag = compute_sky_palette(&SkyColorInput {
             sun_alt_deg: -35.0,
             sun_az_deg: 0.0,
             moon_alt_deg: -25.0,
@@ -386,17 +384,17 @@ mod tests {
             realism_level: 2,
             night_vision: false,
         });
-        let city = compute_sky_palette(&SkyColorInput {
+        let dark_high_mag = compute_sky_palette(&SkyColorInput {
             sun_alt_deg: -35.0,
             sun_az_deg: 0.0,
             moon_alt_deg: -25.0,
             moon_az_deg: 0.0,
             moon_illuminated_fraction: 0.0,
-            limiting_mag: 3.0,
+            limiting_mag: 10.5,
             realism_level: 2,
             night_vision: false,
         });
-        let full_moon_rural = compute_sky_palette(&SkyColorInput {
+        let full_moon_night = compute_sky_palette(&SkyColorInput {
             sun_alt_deg: -35.0,
             sun_az_deg: 0.0,
             moon_alt_deg: 40.0,
@@ -407,12 +405,16 @@ mod tests {
             night_vision: false,
         });
 
-        assert!(city.estimated_bortle >= 8);
-        assert!(rural.estimated_bortle <= 2);
-        assert!(luma(city.horizon) > luma(rural.horizon) + 20.0);
-        assert!(city.light_pollution_strength > rural.light_pollution_strength + 0.5);
-        assert!(full_moon_rural.moonlight_strength > 0.6);
-        assert!(luma(full_moon_rural.mid_sky) > luma(rural.mid_sky));
+        assert_eq!(dark_low_mag.zenith, dark_mid_mag.zenith);
+        assert_eq!(dark_low_mag.mid_sky, dark_mid_mag.mid_sky);
+        assert_eq!(dark_low_mag.horizon, dark_mid_mag.horizon);
+        assert_eq!(dark_low_mag.ground, dark_mid_mag.ground);
+        assert_eq!(dark_low_mag.horizon_line, dark_mid_mag.horizon_line);
+        assert_eq!(dark_mid_mag.zenith, dark_high_mag.zenith);
+        assert_eq!(dark_mid_mag.horizon, dark_high_mag.horizon);
+        assert_eq!(dark_low_mag.light_pollution_strength, 0.0);
+        assert!(full_moon_night.moonlight_strength > 0.6);
+        assert!(luma(full_moon_night.mid_sky) > luma(dark_mid_mag.mid_sky));
     }
 
     #[test]

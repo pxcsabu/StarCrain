@@ -77,7 +77,6 @@ const COLOR_CHANNELS: { key: keyof CustomColorPalette; label: string }[] = [
 ];
 
 export function DisplaySettings() {
-  const skyFrame = useSkyStore((s) => s.skyFrame);
   const projectionMode = useSkyStore((s) => s.projectionMode);
   const viewMode = useSkyStore((s) => s.viewMode);
   const observerBody = useSkyStore((s) => s.observerBody);
@@ -127,7 +126,6 @@ export function DisplaySettings() {
   const [hipsStatus, setHipsStatus] = useState<string | null>(null);
   const panoInputRef = useRef<HTMLInputElement>(null);
   const effFov = effectiveFovDeg(projectionMode, fovDeg) / zoom;
-  const bortle = skyFrame?.sky_palette.estimated_bortle ?? 4;
 
   const handlePanoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -333,7 +331,7 @@ export function DisplaySettings() {
           <div className="flex justify-between">
             <span>最微光星等級</span>
             <span className="font-mono-num text-[var(--accent-primary)]">
-              {limitingMag.toFixed(1)} 等 (Bortle {bortle})
+              {limitingMag.toFixed(1)} 等
             </span>
           </div>
           <input

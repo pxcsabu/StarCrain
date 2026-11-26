@@ -10,6 +10,16 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_ENTRIES: ChangelogRelease[] = [
   {
+    version: "0.3.2",
+    date: "2026-11-26",
+    kind: "fix",
+    title: "最微光星等級スライダー操作時に空の色が変わる不具合を修正",
+    items: [
+      "最微光星等級スライダーを下げて表示星数を少なくすると夜空の背景が夕焼け風のオレンジ色に変わっていた不具合を修正しました",
+      "空の色は太陽高度・月光のみで計算し、最微光星等級スライダーは表示する星の等級上限のみを切り替えるようにしました",
+    ],
+  },
+  {
     version: "0.3.1",
     date: "2026-11-26",
     kind: "fix",
