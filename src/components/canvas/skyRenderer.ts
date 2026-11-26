@@ -45,6 +45,7 @@ import {
   type LandscapeConfig,
   type LocationPreset,
   type MeteorShower,
+  type NightWeatherForecast,
   type ObjectTrail,
   type PickedObject,
   type PlanetTrackOverlay,
@@ -556,6 +557,8 @@ export interface SkyRenderArgs {
   landscapeConfig?: LandscapeConfig;
   hipsConfig?: HipsSurveyConfig;
   offlineMode?: boolean;
+  liveWeather?: NightWeatherForecast | null;
+  showWeatherCloudsOverlay?: boolean;
   printColorMode?: PrintColorMode;
   skipMeteors?: boolean;
   fastInteractive?: boolean;
@@ -1941,12 +1944,42 @@ function drawFovOverlays(
     c.lineWidth = 1.4;
 
     if (preset.kind === "camera") {
-      const rw = dims.widthDeg * pxPerDeg;
-      const rh = dims.heightDeg * pxPerDeg;
-      c.strokeRect(-rw * 0.5, -rh * 0.5, rw, rh);
+      const tw = dims.widthDeg * pxPerDeg;
+      const th = dims.heightDeg * pxPerDeg;
+      const cols = Math.max(1, Math.min(5, Math.round(preset.mosaicCols ?? 1)));
+      const rows = Math.max(1, Math.min(5, Math.round(preset.mosaicRows ?? 1)));
+      const overlapFrac = Math.max(0, Math.min(0.45, (preset.mosaicOverlapPct ?? 15) / 100));
+      const stepX = tw * (1 - overlapFrac);
+      const stepY = th * (1 - overlapFrac);
+      const totalW = tw + (cols - 1) * stepX;
+      const totalH = th + (rows - 1) * stepY;
 
-      // Center cross & top N indicator
-      const arm = Math.min(8, Math.min(rw, rh) * 0.15);
+      if (cols > 1 || rows > 1) {
+        c.save();
+        c.globalAlpha = 0.62;
+        c.setLineDash([4, 3]);
+        const xStart = -totalW * 0.5;
+        const yStart = -totalH * 0.5;
+        for (let rIdx = 0; rIdx < rows; rIdx++) {
+          for (let cIdx = 0; cIdx < cols; cIdx++) {
+            const tx = xStart + cIdx * stepX;
+            const ty = yStart + rIdx * stepY;
+            c.strokeRect(tx, ty, tw, th);
+            if (tw >= 26 && th >= 18) {
+              c.font = '500 9px "Noto Sans JP", system-ui, sans-serif';
+              c.textAlign = "center";
+              c.textBaseline = "middle";
+              c.fillText(`${cIdx + 1}-${rIdx + 1}`, tx + tw * 0.5, ty + th * 0.5);
+            }
+          }
+        }
+        c.restore();
+      }
+
+      c.strokeRect(-totalW * 0.5, -totalH * 0.5, totalW, totalH);
+
+      // Center cross & mosaic/camera label
+      const arm = Math.min(8, Math.min(totalW, totalH) * 0.15);
       c.beginPath();
       c.moveTo(-arm, 0);
       c.lineTo(arm, 0);
@@ -1954,14 +1987,17 @@ function drawFovOverlays(
       c.lineTo(0, arm);
       c.stroke();
 
+      const effW = dims.widthDeg + (cols - 1) * dims.widthDeg * (1 - overlapFrac);
+      const effH = dims.heightDeg + (rows - 1) * dims.heightDeg * (1 - overlapFrac);
+      const label =
+        cols > 1 || rows > 1
+          ? `${preset.name} [${cols}×${rows} ${effW.toFixed(1)}°×${effH.toFixed(1)}°]`
+          : `${preset.name} (${dims.widthDeg.toFixed(1)}°×${dims.heightDeg.toFixed(1)}°)`;
+
       c.font = '600 10px "Noto Sans JP", system-ui, sans-serif';
       c.textAlign = "left";
       c.textBaseline = "bottom";
-      c.fillText(
-        `${preset.name} (${dims.widthDeg.toFixed(1)}°×${dims.heightDeg.toFixed(1)}°)`,
-        -rw * 0.5 + 3,
-        -rh * 0.5 - 3,
-      );
+      c.fillText(label, -totalW * 0.5 + 3, -totalH * 0.5 - 3);
     } else if (preset.kind === "telrad") {
       c.setLineDash([4, 3]);
       for (const diam of [0.5, 2.0, 4.0]) {
@@ -1987,6 +2023,90 @@ function drawFovOverlays(
     }
     c.restore();
   }
+}
+
+function drawWeatherCloudOverlay(
+  c: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  pCtx: CompiledProjectionContext,
+  panel: number,
+  frame: SkyFrame,
+  weather: NightWeatherForecast,
+  nightVision: boolean,
+): void {
+  const targetPrefix = `${frame.local_dt.year}-${String(frame.local_dt.month).padStart(
+    2,
+    "0",
+  )}-${String(frame.local_dt.day).padStart(2, "0")}T${String(frame.local_dt.hour).padStart(
+    2,
+    "0",
+  )}:`;
+  const matched =
+    weather.hours.find((h) => h.time_iso.startsWith(targetPrefix)) ??
+    weather.hours[0];
+
+  const totalPct = matched?.cloud_cover_pct ?? weather.current?.cloud_cover_pct ?? 0;
+  const lowPct = matched?.cloud_low_pct ?? totalPct * 0.4;
+  const highPct = matched?.cloud_high_pct ?? totalPct * 0.3;
+  const visKm = matched?.visibility_km ?? 24;
+
+  if (totalPct < 3 && visKm >= 16) return;
+
+  const { params } = pCtx;
+  let horizonY = height * 0.85;
+  const hPt = projectHorToScreen(params.center_az_deg, 0, pCtx, panel);
+  if (hPt) {
+    horizonY = Math.max(height * 0.25, Math.min(height, hPt.y));
+  }
+
+  const baseAlpha = Math.min(0.76, (totalPct / 100) * 0.72);
+  const mistAlpha = Math.min(0.42, (Math.max(0, 14 - visKm) / 14) * 0.32 + (lowPct / 100) * 0.16);
+  const dayLit = Math.max(0.22, 1 - frame.sky_palette.star_visibility_factor * 0.78);
+  const cloudR = nightVision ? 140 : Math.round(92 + dayLit * 125);
+  const cloudG = nightVision ? 26 : Math.round(106 + dayLit * 118);
+  const cloudB = nightVision ? 22 : Math.round(128 + dayLit * 108);
+
+  c.save();
+
+  // Subtle horizon mist / low cloud veil
+  if (mistAlpha > 0.015) {
+    const g = c.createLinearGradient(0, horizonY - height * 0.42, 0, horizonY + 24);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, `rgba(${cloudR}, ${cloudG}, ${cloudB}, ${mistAlpha.toFixed(3)})`);
+    c.fillStyle = g;
+    c.fillRect(0, 0, width, height);
+  }
+
+  // Deterministic soft billowing cloud puffs shifted slowly by Azimuth + Hour
+  const puffCount = Math.min(26, Math.max(3, Math.round((totalPct / 100) * 26)));
+  const azShift = (params.center_az_deg / 360) * width * 0.9;
+  const hrShift = frame.local_dt.hour * 37;
+
+  for (let i = 0; i < puffCount; i++) {
+    const s1 = Math.sin(i * 12.9898 + 4.1414) * 43758.5453;
+    const f1 = s1 - Math.floor(s1);
+    const s2 = Math.sin(i * 78.233 + 1.23) * 19341.21;
+    const f2 = s2 - Math.floor(s2);
+
+    const px = (((f1 * width * 1.4 - azShift + hrShift) % (width * 1.2)) + width * 1.2) % (width * 1.2) - width * 0.1;
+    const altBand = i % 3 === 0 ? 0.15 + f2 * 0.35 : 0.35 + f2 * 0.48;
+    const py = horizonY * altBand;
+    const rx = width * (0.14 + f1 * 0.22);
+    const layerOpacity =
+      baseAlpha * (i % 3 === 0 ? 0.42 + (highPct / 100) * 0.3 : 0.6 + (lowPct / 100) * 0.35);
+
+    const g = c.createRadialGradient(px, py, rx * 0.1, px, py, rx);
+    g.addColorStop(0, `rgba(${cloudR}, ${cloudG}, ${cloudB}, ${Math.min(0.65, layerOpacity).toFixed(3)})`);
+    g.addColorStop(0.55, `rgba(${cloudR}, ${cloudG}, ${cloudB}, ${(layerOpacity * 0.42).toFixed(3)})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = g;
+    c.beginPath();
+    c.arc(px, py, rx, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  c.restore();
 }
 
 export function renderSkyCanvas(args: SkyRenderArgs): void {
@@ -2023,6 +2143,8 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     landscapeConfig = DEFAULT_LANDSCAPE_CONFIG,
     hipsConfig = DEFAULT_HIPS_CONFIG,
     offlineMode = false,
+    liveWeather = null,
+    showWeatherCloudsOverlay = false,
     printColorMode = "normal",
     skipMeteors = false,
     fastInteractive = false,
@@ -2803,6 +2925,11 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
           '600 11px "Noto Sans JP", system-ui, sans-serif',
         );
       }
+    }
+
+    // Live Weather Cloud & Atmospheric Haze Overlay (driven by Open-Meteo hourly forecast)
+    if (showWeatherCloudsOverlay && liveWeather && !isInverted && !isOtherStar) {
+      drawWeatherCloudOverlay(c, width, height, pCtx, panel, frame, liveWeather, nightVision);
     }
 
     // 360° Horizon Panorama Landscape (built-in presets or Gcam Photo Sphere) + Horizon Line & Cardinals

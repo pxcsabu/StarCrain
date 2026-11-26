@@ -4,27 +4,30 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::calendar::format_local_hm;
+use crate::engine::catalog::CatalogStore;
 use crate::engine::comet::comet_ephemeris;
-use crate::engine::comet_db::{CometDb, CometRecord};
+use crate::engine::comet_db::{CometDb, CometRecord, ObservationLogRecord};
 use crate::engine::coords::{
     Equatorial, angular_distance_deg, apply_standard_refraction, equatorial_j2000_to_galactic,
     equatorial_to_ecliptic, equatorial_to_horizontal, wrap_deg_180, wrap_deg_360,
 };
-use crate::engine::ephemeris::{geocentric_to_topocentric, sun_ephemeris};
+use crate::engine::ephemeris::{
+    Planet, geocentric_to_topocentric, planet_ephemeris, sun_ephemeris,
+};
 use crate::engine::precession::{
-    B1950_JD, J2000_JD, OBLIQUITY_J2000_DEG, b1950_to_j2000, j2000_to_b1950,
-    precess_between_epochs,
+    B1950_JD, J2000_JD, OBLIQUITY_J2000_DEG, apply_nutation_to_equatorial, b1950_to_j2000,
+    j2000_to_b1950, nutation, precess_between_epochs, precess_j2000_to_date,
 };
 use crate::engine::rise_set::{
-    ObserverLocation, altitude_crossing_times, equatorial_j2000_rise_set,
+    ObserverLocation, altitude_crossing_times, equatorial_j2000_rise_set, planet_rise_set,
 };
 use crate::engine::satellite::{
     SatellitePass, SatelliteSkyPos, parse_tle_text, predict_satellite_passes,
     propagate_satellite_at,
 };
 use crate::engine::time::{
-    delta_t_seconds, equation_of_time_min, gast_deg, gmst_deg, jd_to_mjd, jd_to_ymd_hms,
-    last_deg, lst_deg, mjd_to_jd, ut_to_tt_jd, ymd_hms_to_jd,
+    calendar_to_jd, delta_t_seconds, equation_of_time_min, gast_deg, gmst_deg, jd_to_mjd,
+    jd_to_ymd_hms, last_deg, lst_deg, mjd_to_jd, ut_to_tt_jd, ymd_hms_to_jd,
 };
 
 fn format_hms_angle(deg: f64, signed: bool) -> String {
@@ -868,6 +871,381 @@ pub fn get_iss_earth_view_cmd(
     get_iss_earth_view_impl(&req, &db)
 }
 
+// =========================================================================
+// 4. Tonight's Best Objects Guide, Observation Logbook & Polar Alignment
+// =========================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TonightBestRequest {
+    pub jd_ut: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub alt_m: f64,
+    pub tz_offset_min: i32,
+    pub gear: String, // "naked_eye" | "binoculars" | "telescope"
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TonightBestObject {
+    pub id: String,
+    pub name_ja: String,
+    pub name_en: String,
+    pub kind: String,
+    pub constellation: Option<String>,
+    pub mag: f64,
+    pub ra_deg: f64,
+    pub dec_deg: f64,
+    pub az_deg: f64,
+    pub alt_deg: f64,
+    pub max_alt_deg: f64,
+    pub transit_str: Option<String>,
+    pub score: u8,
+    pub reason_ja: String,
+    pub recommended_gear: String,
+}
+
+pub fn get_tonight_best_objects_impl(
+    req: &TonightBestRequest,
+    store: &CatalogStore,
+) -> Vec<TonightBestObject> {
+    let loc = ObserverLocation {
+        lat_deg: req.lat_deg,
+        lon_deg: req.lon_deg,
+        alt_m: req.alt_m,
+        tz_offset_min: req.tz_offset_min,
+    };
+    let local_ms = (req.jd_ut - 2_440_587.5) * 86_400_000.0 + f64::from(req.tz_offset_min) * 60_000.0;
+    let approx_utc_jd = 2_440_587.5 + local_ms / 86_400_000.0;
+    let (year, month, day, _, _, _) = jd_to_ymd_hms(approx_utc_jd);
+
+    let jd_tt = ut_to_tt_jd(req.jd_ut);
+    let lst = last_deg(req.jd_ut, req.lon_deg);
+    let nut = nutation(jd_tt);
+
+    let sun_eph = sun_ephemeris(jd_tt);
+    let sun_hor = equatorial_to_horizontal(sun_eph.eq_apparent, req.lat_deg, lst);
+    // If querying during daytime, preview positions as of local 21:00 evening for tonight's planning
+    let eval_jd = if sun_hor.alt_deg > -6.0 {
+        calendar_to_jd(year, month, f64::from(day)) + (21.0 / 24.0) - f64::from(req.tz_offset_min) / 1440.0
+    } else {
+        req.jd_ut
+    };
+    let eval_tt = ut_to_tt_jd(eval_jd);
+    let eval_lst = last_deg(eval_jd, req.lon_deg);
+    let eval_nut = nutation(eval_tt);
+
+    let gear = req.gear.as_str();
+    let mag_cutoff: f64 = match gear {
+        "naked_eye" => 4.2,
+        "binoculars" => 7.6,
+        _ => 11.2,
+    };
+
+    let mut items: Vec<TonightBestObject> = Vec::with_capacity(64);
+
+    // 1. Bright Planets (skip Venus/Mercury if too low? Still include if max_alt > 8°)
+    for p in Planet::ALL {
+        let eph = planet_ephemeris(p, eval_tt);
+        let rs = planet_rise_set(p, &loc, year, month, day);
+        let topo = geocentric_to_topocentric(eph.eq_apparent, eph.geo_au, loc.lat_deg, loc.alt_m, eval_lst);
+        let hor = equatorial_to_horizontal(topo, loc.lat_deg, eval_lst);
+        if rs.max_alt_deg < 10.0 || eph.elongation_deg < 12.0 {
+            continue;
+        }
+        let alt_use = hor.alt_deg.max(rs.max_alt_deg * 0.65);
+        let mut score = 58.0 + (alt_use.clamp(0.0, 80.0) * 0.45) - eph.visual_magnitude * 3.5;
+        if gear == "telescope" && matches!(p, Planet::Jupiter | Planet::Saturn | Planet::Mars) {
+            score += 12.0;
+        }
+        if hor.alt_deg < 5.0 {
+            score -= 18.0;
+        }
+        let reason = match p {
+            Planet::Jupiter => "縞模様と4大ガリレオ衛星が見頃",
+            Planet::Saturn => "土星の環とタイタンを観察する絶好機",
+            Planet::Venus => "圧倒的な輝き（宵/明けの明星）",
+            Planet::Mars => "赤く輝く火星・表面模様に注目",
+            _ => "高倍率望遠鏡で狙う外惑星",
+        };
+        items.push(TonightBestObject {
+            id: format!("{p:?}").to_lowercase(),
+            name_ja: p.name_ja().into(),
+            name_en: format!("{p:?}"),
+            kind: "planet".into(),
+            constellation: None,
+            mag: eph.visual_magnitude,
+            ra_deg: eph.eq_j2000.ra_deg,
+            dec_deg: eph.eq_j2000.dec_deg,
+            az_deg: hor.az_deg,
+            alt_deg: hor.alt_deg,
+            max_alt_deg: rs.max_alt_deg,
+            transit_str: format_local_hm(rs.transit_jd_ut, req.tz_offset_min),
+            score: score.round().clamp(10.0, 100.0) as u8,
+            reason_ja: reason.into(),
+            recommended_gear: if matches!(p, Planet::Uranus | Planet::Neptune) {
+                "双眼鏡〜望遠鏡".into()
+            } else {
+                "肉眼〜望遠鏡".into()
+            },
+        });
+    }
+
+    // 2. Messier & Iconic DSOs
+    for dso in &store.dsos {
+        let Some(m_num) = dso.messier else {
+            continue;
+        };
+        let mag = f64::from(dso.mag.unwrap_or(9.5));
+        if mag > mag_cutoff {
+            continue;
+        }
+        let eq_j2k = Equatorial {
+            ra_deg: dso.ra_deg,
+            dec_deg: dso.dec_deg,
+        };
+        let rs = equatorial_j2000_rise_set(eq_j2k, &loc, year, month, day);
+        if rs.max_alt_deg < 14.0 {
+            continue;
+        }
+        let eq_app = apply_nutation_to_equatorial(precess_j2000_to_date(eq_j2k, eval_tt), &eval_nut);
+        let hor = equatorial_to_horizontal(eq_app, loc.lat_deg, eval_lst);
+
+        let is_showcase = matches!(m_num, 31 | 42 | 45 | 8 | 13 | 27 | 57 | 51 | 81 | 44 | 7 | 6 | 20);
+        let mut score = 45.0 + (hor.alt_deg.max(rs.max_alt_deg * 0.6).clamp(0.0, 80.0) * 0.42) + (10.5 - mag) * 4.0;
+        if is_showcase {
+            score += 14.0;
+        }
+        if hor.alt_deg < 6.0 {
+            score -= 22.0;
+        }
+        if gear == "naked_eye" && !matches!(m_num, 31 | 42 | 45 | 44 | 7) {
+            score -= 20.0;
+        } else if gear == "binoculars" && mag <= 7.2 {
+            score += 8.0;
+        } else if gear == "telescope" && matches!(dso.obj_type.as_str(), "GX" | "PN" | "GC" | "NB") {
+            score += 6.0;
+        }
+
+        let name_ja = dso
+            .name_ja
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("M{m_num} {s}"))
+            .unwrap_or_else(|| format!("M{m_num} {}", dso.name_en));
+
+        let reason_ja = match dso.obj_type.as_str() {
+            "NB" => "華やかな星雲・星形成領域の定番ターゲット",
+            "GX" => "銀河の渦や広がりを狙う人気対象",
+            "GC" => "多数の星が密集した美しい球状星団",
+            "OC" => "双眼鏡・低倍率で映える散開星団",
+            "PN" => "望遠鏡で環や中心構造を狙う惑星状星雲",
+            _ => "メシエ天体の注目ターゲット",
+        };
+
+        items.push(TonightBestObject {
+            id: format!("M{m_num}"),
+            name_ja,
+            name_en: dso.name_en.clone(),
+            kind: "dso".into(),
+            constellation: Some(dso.constellation.clone()),
+            mag,
+            ra_deg: dso.ra_deg,
+            dec_deg: dso.dec_deg,
+            az_deg: hor.az_deg,
+            alt_deg: hor.alt_deg,
+            max_alt_deg: rs.max_alt_deg,
+            transit_str: format_local_hm(rs.transit_jd_ut, req.tz_offset_min),
+            score: score.round().clamp(10.0, 100.0) as u8,
+            reason_ja: reason_ja.into(),
+            recommended_gear: if mag <= 5.0 {
+                "肉眼〜双眼鏡".into()
+            } else if mag <= 7.4 {
+                "双眼鏡〜小口径".into()
+            } else {
+                "天体望遠鏡".into()
+            },
+        });
+    }
+
+    // 3. First-magnitude showcase stars (especially helpful for naked_eye / quick alignment)
+    for g in store.star_guides.iter().take(24) {
+        if f64::from(g.mag) > 2.2 {
+            continue;
+        }
+        let Some(star) = store.stars.find_by_hip(g.hip) else {
+            continue;
+        };
+        let eq_j2k = Equatorial {
+            ra_deg: f64::from(star.ra_rad).to_degrees(),
+            dec_deg: f64::from(star.dec_rad).to_degrees(),
+        };
+        let rs = equatorial_j2000_rise_set(eq_j2k, &loc, year, month, day);
+        if rs.max_alt_deg < 15.0 {
+            continue;
+        }
+        let eq_app = apply_nutation_to_equatorial(precess_j2000_to_date(eq_j2k, eval_tt), &eval_nut);
+        let hor = equatorial_to_horizontal(eq_app, loc.lat_deg, eval_lst);
+        let mut score = 46.0 + hor.alt_deg.clamp(0.0, 80.0) * 0.4 + (2.5 - f64::from(g.mag)) * 5.0;
+        if gear == "naked_eye" {
+            score += 18.0;
+        }
+        if hor.alt_deg < 8.0 {
+            score -= 22.0;
+        }
+        items.push(TonightBestObject {
+            id: format!("HIP{}", g.hip),
+            name_ja: g.name_ja.clone(),
+            name_en: g.name_en.clone(),
+            kind: "star".into(),
+            constellation: Some(g.constellation.clone()),
+            mag: f64::from(g.mag),
+            ra_deg: eq_j2k.ra_deg,
+            dec_deg: eq_j2k.dec_deg,
+            az_deg: hor.az_deg,
+            alt_deg: hor.alt_deg,
+            max_alt_deg: rs.max_alt_deg,
+            transit_str: format_local_hm(rs.transit_jd_ut, req.tz_offset_min),
+            score: score.round().clamp(10.0, 100.0) as u8,
+            reason_ja: g.summary_ja.clone(),
+            recommended_gear: "肉眼OK".into(),
+        });
+    }
+
+    let _ = (nut, lst);
+    items.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.mag.total_cmp(&b.mag)));
+    items.truncate(12);
+    items
+}
+
+#[tauri::command]
+pub fn get_tonight_best_objects_cmd(
+    req: TonightBestRequest,
+    store: State<'_, CatalogStore>,
+) -> Vec<TonightBestObject> {
+    get_tonight_best_objects_impl(&req, &store)
+}
+
+#[tauri::command]
+pub fn list_observation_logs_cmd(db: State<'_, CometDb>) -> Result<Vec<ObservationLogRecord>, String> {
+    db.list_observation_logs()
+}
+
+#[tauri::command]
+pub fn upsert_observation_log_cmd(
+    record: ObservationLogRecord,
+    db: State<'_, CometDb>,
+) -> Result<ObservationLogRecord, String> {
+    db.upsert_observation_log(record)
+}
+
+#[tauri::command]
+pub fn delete_observation_log_cmd(id: String, db: State<'_, CometDb>) -> Result<bool, String> {
+    db.delete_observation_log(&id)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PolarAlignRequest {
+    pub jd_ut: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub tz_offset_min: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PolarAlignmentInfo {
+    pub jd_ut: f64,
+    pub hemisphere: String,
+    pub pole_star_name_ja: String,
+    pub ra_app_deg: f64,
+    pub dec_app_deg: f64,
+    pub last_deg: f64,
+    pub ha_deg: f64,
+    pub ha_hours: f64,
+    pub polar_dist_arcmin: f64,
+    pub clock_hour_erect: f64,
+    pub clock_hour_inverted: f64,
+    pub clock_str_erect: String,
+    pub clock_str_inverted: String,
+    pub next_transit_str: String,
+}
+
+fn format_clock_hour_ja(h12: f64) -> String {
+    let wrapped = ((h12 % 12.0) + 12.0) % 12.0;
+    let total_min = (wrapped * 60.0).round() as i32 % 720;
+    let hh = total_min / 60;
+    let mm = total_min % 60;
+    let disp_h = if hh == 0 { 12 } else { hh };
+    format!("{disp_h}時{mm:02}分")
+}
+
+pub fn get_polar_alignment_impl(req: &PolarAlignRequest) -> PolarAlignmentInfo {
+    let is_north = req.lat_deg >= 0.0;
+    // Polaris J2000 (HIP 11767) vs Sigma Octantis J2000 (HIP 100511)
+    let (pole_name_ja, eq_j2k) = if is_north {
+        (
+            "ポラリス (北極星 · α UMi)".to_owned(),
+            Equatorial {
+                ra_deg: 37.954_56,
+                dec_deg: 89.264_11,
+            },
+        )
+    } else {
+        (
+            "はちぶんぎ座 σ星 (南極星)".to_owned(),
+            Equatorial {
+                ra_deg: 317.195_17,
+                dec_deg: -88.956_51,
+            },
+        )
+    };
+
+    let jd_tt = ut_to_tt_jd(req.jd_ut);
+    let nut = nutation(jd_tt);
+    let eq_app = apply_nutation_to_equatorial(precess_j2000_to_date(eq_j2k, jd_tt), &nut);
+    let lst = last_deg(req.jd_ut, req.lon_deg);
+    let ha_deg = wrap_deg_180(lst - eq_app.ra_deg);
+    let ha_hours = ha_deg / 15.0;
+    let polar_dist_arcmin = (90.0 - eq_app.dec_deg.abs()).max(0.0) * 60.0;
+
+    // Facing North in NH: celestial sphere turns CCW; before transit (HA<0), Polaris is East (Right = 3 o'clock).
+    // Facing South in SH: celestial sphere turns CW; before transit (HA<0), σ Oct is East (Left = 9 o'clock).
+    let raw_erect = if is_north {
+        -ha_hours / 2.0
+    } else {
+        ha_hours / 2.0
+    };
+    let clock_hour_erect = ((raw_erect % 12.0) + 12.0) % 12.0;
+    let clock_hour_inverted = (clock_hour_erect + 6.0) % 12.0;
+
+    // Next upper culmination (HA = 0°)
+    let ha_ahead_deg = wrap_deg_360(eq_app.ra_deg - lst);
+    let dt_days = (ha_ahead_deg / 360.0) * 0.997_269_57;
+    let next_transit_str =
+        format_local_hm(Some(req.jd_ut + dt_days), req.tz_offset_min).unwrap_or_default();
+
+    PolarAlignmentInfo {
+        jd_ut: req.jd_ut,
+        hemisphere: if is_north { "north" } else { "south" }.into(),
+        pole_star_name_ja: pole_name_ja,
+        ra_app_deg: eq_app.ra_deg,
+        dec_app_deg: eq_app.dec_deg,
+        last_deg: lst,
+        ha_deg,
+        ha_hours,
+        polar_dist_arcmin,
+        clock_hour_erect,
+        clock_hour_inverted,
+        clock_str_erect: format_clock_hour_ja(clock_hour_erect),
+        clock_str_inverted: format_clock_hour_ja(clock_hour_inverted),
+        next_transit_str,
+    }
+}
+
+#[tauri::command]
+pub fn get_polar_alignment_cmd(req: PolarAlignRequest) -> PolarAlignmentInfo {
+    get_polar_alignment_impl(&req)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1019,5 +1397,33 @@ mod tests {
         assert!(view.current.velocity_km_s > 6.5 && view.current.velocity_km_s < 8.5);
         assert!(view.subsolar_lat_deg.abs() <= 24.0);
         assert!(view.subsolar_lon_deg.abs() <= 180.0);
+    }
+
+    #[test]
+    fn polar_alignment_and_tonight_best_work() {
+        let pol = get_polar_alignment_impl(&PolarAlignRequest {
+            jd_ut: calendar_to_jd(2026, 11, 26.5),
+            lat_deg: 34.6431,
+            lon_deg: 134.9972,
+            tz_offset_min: 540,
+        });
+        assert_eq!(pol.hemisphere, "north");
+        assert!(pol.polar_dist_arcmin > 30.0 && pol.polar_dist_arcmin < 45.0);
+        assert!(((pol.clock_hour_erect + 6.0) % 12.0 - pol.clock_hour_inverted).abs() < 1e-6);
+
+        let store = CatalogStore::load_embedded().expect("embedded catalog");
+        let list = get_tonight_best_objects_impl(
+            &TonightBestRequest {
+                jd_ut: calendar_to_jd(2026, 11, 26.5),
+                lat_deg: 34.6431,
+                lon_deg: 134.9972,
+                alt_m: 10.0,
+                tz_offset_min: 540,
+                gear: "telescope".into(),
+            },
+            &store,
+        );
+        assert_eq!(list.len(), 12);
+        assert!(list.iter().all(|o| o.max_alt_deg >= 10.0));
     }
 }

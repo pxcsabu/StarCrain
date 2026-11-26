@@ -29,12 +29,15 @@ import { MoonCalendar } from "@/components/panels/MoonCalendar";
 import { ObjectInspector } from "@/components/panels/ObjectInspector";
 import { ObservationData } from "@/components/panels/ObservationData";
 import { PlanetTools } from "@/components/panels/PlanetTools";
+import { PolarAlignment } from "@/components/panels/PolarAlignment";
 import { PrintExport } from "@/components/panels/PrintExport";
 import { SearchDialog } from "@/components/panels/SearchDialog";
 import { SettingsPanel } from "@/components/panels/SettingsPanel";
 import { SimulationControl } from "@/components/panels/SimulationControl";
 import { TimeControl } from "@/components/panels/TimeControl";
+import { TonightGuide } from "@/components/panels/TonightGuide";
 import { VariableStars } from "@/components/panels/VariableStars";
+import { WeatherForecast } from "@/components/panels/WeatherForecast";
 import { IssEarthView } from "@/components/solar3d/IssEarthView";
 import { Planet3DViewerModal } from "@/components/solar3d/Planet3DViewerModal";
 import { SolarSystem3D } from "@/components/solar3d/SolarSystem3D";
@@ -61,6 +64,12 @@ function renderPanelBody(id: Exclude<ActivePanelId, null>) {
       return <MoonCalendar />;
     case "meteors":
       return <MeteorShowers />;
+    case "weather":
+      return <WeatherForecast />;
+    case "tonight_guide":
+      return <TonightGuide />;
+    case "polar_align":
+      return <PolarAlignment />;
     case "planets":
       return <PlanetTools />;
     case "solar3d":

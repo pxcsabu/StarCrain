@@ -246,6 +246,36 @@ export function CommandPalette() {
         },
       },
       {
+        key: "act-weather",
+        title: "天気予報・宇宙天気 (オーロラ) を開く",
+        subtitle: "現在天気・48時間雲層・7日間夜間観望指数・NOAA Kp磁気嵐/太陽風/オーロラ期待度",
+        badge: "気象",
+        run: () => {
+          st.setActivePanel("weather");
+          setOpen(false);
+        },
+      },
+      {
+        key: "act-tonight-guide",
+        title: "今夜ベスト10・観望ログ (メシエ進捗)・ISS/食タイムラプス再生",
+        subtitle: "機材別おすすめ12天体・SQLite観望日記・ISS通過カウントダウン＆アラーム登録",
+        badge: "ガイド",
+        run: () => {
+          st.setActivePanel("tonight_guide");
+          setOpen(false);
+        },
+      },
+      {
+        key: "act-polar-align",
+        title: "極軸合わせ支援 (極軸望遠鏡レチクル) を開く",
+        subtitle: "北極星 / σ Octantis の倒立・正立クロック位置、時角、上方通過時刻を表示",
+        badge: "極軸",
+        run: () => {
+          st.setActivePanel("polar_align");
+          setOpen(false);
+        },
+      },
+      {
         key: "act-toggle-meteors",
         title: "ライブ流れ星エフェクト ON / OFF",
         subtitle: "季節流星群ZHR＆散在流星＋火球流星痕アニメーション切替",

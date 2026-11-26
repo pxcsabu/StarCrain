@@ -94,6 +94,8 @@ export function DisplaySettings() {
   const landscapeConfig = useSkyStore((s) => s.landscapeConfig);
   const hipsConfig = useSkyStore((s) => s.hipsConfig);
   const offlineMode = useSkyStore((s) => s.offlineMode);
+  const liveWeather = useSkyStore((s) => s.liveWeather);
+  const showWeatherCloudsOverlay = useSkyStore((s) => s.showWeatherCloudsOverlay);
   const meteorAnimationEnabled = useSkyStore((s) => s.meteorAnimationEnabled);
   const meteorRateMultiplier = useSkyStore((s) => s.meteorRateMultiplier);
 
@@ -115,6 +117,7 @@ export function DisplaySettings() {
   const bumpLandscapeVersion = useSkyStore((s) => s.bumpLandscapeVersion);
   const setHipsConfig = useSkyStore((s) => s.setHipsConfig);
   const toggleHipsEnabled = useSkyStore((s) => s.toggleHipsEnabled);
+  const setShowWeatherCloudsOverlay = useSkyStore((s) => s.setShowWeatherCloudsOverlay);
   const setMeteorAnimationEnabled = useSkyStore((s) => s.setMeteorAnimationEnabled);
   const setMeteorRateMultiplier = useSkyStore((s) => s.setMeteorRateMultiplier);
   const jumpToYmdHms = useSkyStore((s) => s.jumpToYmdHms);
@@ -397,6 +400,28 @@ export function DisplaySettings() {
               />
             </label>
             <label className="flex cursor-pointer items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span>天気予報の雲量を星図に反映</span>
+                {!liveWeather && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setActivePanel("weather");
+                    }}
+                    className="rounded border border-sky-400/35 px-1.5 py-0.2 text-[9.5px] text-sky-300 hover:bg-sky-500/15"
+                  >
+                    取得
+                  </button>
+                )}
+              </span>
+              <input
+                type="checkbox"
+                checked={showWeatherCloudsOverlay}
+                onChange={(e) => setShowWeatherCloudsOverlay(e.target.checked)}
+              />
+            </label>
+            <label className="flex cursor-pointer items-center justify-between">
               <span>起動時に当日の観測データを表示</span>
               <input
                 type="checkbox"
@@ -558,6 +583,7 @@ export function DisplaySettings() {
                 { id: "mountain", label: "山岳高原" },
                 { id: "coast", label: "海辺と岬" },
                 { id: "observatory", label: "天文台" },
+                { id: "desert", label: "砂漠とメサ" },
                 { id: "custom", label: "カスタム360°" },
               ] as { id: LandscapePresetId; label: string }[]
             ).map((p) => (
@@ -675,6 +701,16 @@ export function DisplaySettings() {
 
           {landscapeConfig.preset !== "veil" && (
             <div className="space-y-1.5 text-[11px]">
+              {landscapeConfig.preset !== "custom" && (
+                <label className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5">
+                  <span className="font-medium">Three.js 3D地形モデルを使用</span>
+                  <input
+                    type="checkbox"
+                    checked={landscapeConfig.use3dTerrain}
+                    onChange={(e) => setLandscapeConfig({ use3dTerrain: e.target.checked })}
+                  />
+                </label>
+              )}
               <div>
                 <div className="flex justify-between text-[10px] text-[var(--text-muted)]">
                   <span>北の方位オフセット</span>

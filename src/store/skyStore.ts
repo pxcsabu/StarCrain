@@ -32,6 +32,7 @@ import {
   type HipsSurveyConfig,
   type LandscapeConfig,
   type LocationPreset,
+  type NightWeatherForecast,
   type ObjectDetails,
   type ObjectTrail,
   type ObserverBodyId,
@@ -48,6 +49,7 @@ import {
   type SkyLayerVisibility,
   type SkyStaticAssets,
   type SkyViewMode,
+  type SpaceWeatherSnapshot,
   type StarCraneProfileV1,
   type UnitSystem,
 } from "@/types/sky";
@@ -74,6 +76,7 @@ const STARTUP_DEMO_STORAGE_KEY = "starcrane-startup-demo-v1";
 const UNITS_STORAGE_KEY = "starcrane-units-v1";
 const FOV_STORAGE_KEY = "starcrane-fov-v1";
 const OFFLINE_STORAGE_KEY = "starcrane-offline-v1";
+const WEATHER_CLOUDS_STORAGE_KEY = "starcrane-weather-clouds-v1";
 const LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v1";
 const METEOR_ANIM_STORAGE_KEY = "starcrane:meteors_on:v1";
 const HIPS_STORAGE_KEY = "starcrane-hips-v1";
@@ -140,6 +143,7 @@ function loadLandscapeConfig(): LandscapeConfig {
       p.preset === "mountain" ||
       p.preset === "coast" ||
       p.preset === "observatory" ||
+      p.preset === "desert" ||
       p.preset === "custom"
         ? p.preset
         : DEFAULT_LANDSCAPE_CONFIG.preset;
@@ -151,6 +155,10 @@ function loadLandscapeConfig(): LandscapeConfig {
         : DEFAULT_LANDSCAPE_CONFIG.maskMode;
     return {
       preset: validPreset,
+      use3dTerrain:
+        typeof p.use3dTerrain === "boolean"
+          ? p.use3dTerrain
+          : DEFAULT_LANDSCAPE_CONFIG.use3dTerrain,
       azOffsetDeg:
         typeof p.azOffsetDeg === "number" && Number.isFinite(p.azOffsetDeg)
           ? Math.max(-180, Math.min(180, p.azOffsetDeg))
@@ -219,6 +227,11 @@ function persistFovPresets(list: FovPreset[]): void {
 function loadOfflineMode(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(OFFLINE_STORAGE_KEY) === "1";
+}
+
+function loadWeatherCloudsPref(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(WEATHER_CLOUDS_STORAGE_KEY) === "1";
 }
 
 function loadStartupObsPref(): boolean {
@@ -421,6 +434,9 @@ export interface SkyState {
   satellitesVersion: number;
   highlightedSatPass: SatellitePass | null;
   offlineMode: boolean;
+  liveWeather: NightWeatherForecast | null;
+  showWeatherCloudsOverlay: boolean;
+  liveSpaceWeather: SpaceWeatherSnapshot | null;
 
   // Simulation & Timeline
   simPlaying: boolean;
@@ -529,6 +545,9 @@ export interface SkyState {
   notifySatellitesChanged: () => Promise<void>;
   setHighlightedSatPass: (pass: SatellitePass | null) => void;
   setOfflineMode: (offline: boolean) => void;
+  setLiveWeather: (weather: NightWeatherForecast | null) => void;
+  setShowWeatherCloudsOverlay: (on: boolean) => void;
+  setLiveSpaceWeather: (sw: SpaceWeatherSnapshot | null) => void;
 
   // Phase 9 Actions
   setDefaultLocation: (id: string) => void;
@@ -626,6 +645,9 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   satellitesVersion: 0,
   highlightedSatPass: null,
   offlineMode: loadOfflineMode(),
+  liveWeather: null,
+  showWeatherCloudsOverlay: loadWeatherCloudsPref(),
+  liveSpaceWeather: null,
 
   simPlaying: false,
   simDirection: 1,
@@ -1471,6 +1493,14 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       return { hipsConfig: next };
     }),
   openPlanet3d: (planet3dBodyId) => set({ planet3dBodyId }),
+  setLiveWeather: (liveWeather) => set({ liveWeather }),
+  setShowWeatherCloudsOverlay: (showWeatherCloudsOverlay) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(WEATHER_CLOUDS_STORAGE_KEY, showWeatherCloudsOverlay ? "1" : "0");
+    }
+    set({ showWeatherCloudsOverlay });
+  },
+  setLiveSpaceWeather: (liveSpaceWeather) => set({ liveSpaceWeather }),
   addAltitudeTarget: (item) =>
     set((s) => {
       if (s.altitudeTargets.some((t) => t.id === item.id)) {

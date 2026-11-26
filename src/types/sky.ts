@@ -686,6 +686,9 @@ export type ActivePanelId =
   | "observation"
   | "moon_calendar"
   | "meteors"
+  | "weather"
+  | "tonight_guide"
+  | "polar_align"
   | "planets"
   | "solar3d"
   | "iss_view"
@@ -1369,6 +1372,9 @@ export interface FovPreset {
   enabled: boolean;
   color: string;
   rotationDeg: number;
+  mosaicCols?: number;
+  mosaicRows?: number;
+  mosaicOverlapPct?: number;
   sensorWidthMm?: number;
   sensorHeightMm?: number;
   focalLengthMm?: number;
@@ -1456,6 +1462,19 @@ export interface OnlineSyncResult {
   summary_ja: string;
 }
 
+export interface WeatherCurrent {
+  temp_c: number;
+  apparent_temp_c: number;
+  humidity_pct: number;
+  cloud_cover_pct: number;
+  wind_kmh: number;
+  wind_dir_deg: number;
+  pressure_hpa: number;
+  weather_code: number;
+  weather_label_ja: string;
+  is_day: boolean;
+}
+
 export interface WeatherHourPoint {
   time_iso: string;
   label: string;
@@ -1466,6 +1485,27 @@ export interface WeatherHourPoint {
   temp_c: number;
   humidity_pct: number;
   wind_kmh: number;
+  weather_code: number;
+  weather_label_ja: string;
+  precip_prob_pct: number;
+  precip_mm: number;
+  dew_point_c: number;
+  visibility_km: number;
+  wind_dir_deg: number;
+  stargazing_score: number;
+}
+
+export interface WeatherDailyPoint {
+  date: string;
+  weather_code: number;
+  weather_label_ja: string;
+  temp_max_c: number;
+  temp_min_c: number;
+  precip_prob_max_pct: number;
+  precip_sum_mm: number;
+  wind_max_kmh: number;
+  night_avg_cloud_pct: number;
+  stargazing_score: number;
 }
 
 export interface NightWeatherForecast {
@@ -1475,6 +1515,95 @@ export interface NightWeatherForecast {
   tonight_avg_cloud_pct: number;
   rating_ja: string;
   hours: WeatherHourPoint[];
+  current: WeatherCurrent | null;
+  daily: WeatherDailyPoint[];
+  tonight_stargazing_score: number;
+  best_stargazing_window: string | null;
+}
+
+export interface KpSample {
+  time_tag: string;
+  kp: number;
+  a_running: number | null;
+  station_count: number | null;
+}
+
+export interface SpaceWeatherSnapshot {
+  source_url: string;
+  current_kp: number;
+  max_kp_24h: number;
+  storm_level_ja: string;
+  solar_wind_km_s: number | null;
+  bz_nt: number | null;
+  f107_flux: number | null;
+  geomagnetic_lat_deg: number;
+  aurora_visibility_pct: number;
+  aurora_summary_ja: string;
+  kp_series: KpSample[];
+}
+
+export interface TonightBestObject {
+  id: string;
+  name_ja: string;
+  name_en: string;
+  kind: string;
+  constellation: string | null;
+  mag: number;
+  ra_deg: number;
+  dec_deg: number;
+  az_deg: number;
+  alt_deg: number;
+  max_alt_deg: number;
+  transit_str: string | null;
+  score: number;
+  reason_ja: string;
+  recommended_gear: string;
+}
+
+export interface ObservationLogRecord {
+  id: string;
+  object_id: string;
+  object_name: string;
+  object_kind: string;
+  observed_at_iso: string;
+  location_name: string;
+  equipment: string;
+  rating: number;
+  notes: string;
+  created_at: number;
+}
+
+export interface PolarAlignmentInfo {
+  jd_ut: number;
+  hemisphere: "north" | "south";
+  pole_star_name_ja: string;
+  ra_app_deg: number;
+  dec_app_deg: number;
+  last_deg: number;
+  ha_deg: number;
+  ha_hours: number;
+  polar_dist_arcmin: number;
+  clock_hour_erect: number;
+  clock_hour_inverted: number;
+  clock_str_erect: string;
+  clock_str_inverted: string;
+  next_transit_str: string;
+}
+
+export interface ImagingPlanItem {
+  id: string;
+  name: string;
+  raDeg: number;
+  decDeg: number;
+  presetName: string;
+  fovWidthDeg: number;
+  fovHeightDeg: number;
+  rotationDeg: number;
+  mosaicCols: number;
+  mosaicRows: number;
+  subExposureSec: number;
+  subFrames: number;
+  notes: string;
 }
 
 export type PrintPaperSize = "A4" | "B5";
@@ -1509,11 +1638,12 @@ export interface StarCraneProfileV1 {
   fovPresets: FovPreset[];
 }
 
-export type LandscapePresetId = "veil" | "mountain" | "coast" | "observatory" | "custom";
+export type LandscapePresetId = "veil" | "mountain" | "coast" | "observatory" | "desert" | "custom";
 export type CustomPanoramaMaskMode = "auto_sky_key" | "horizon_cut" | "alpha_only";
 
 export interface LandscapeConfig {
   preset: LandscapePresetId;
+  use3dTerrain: boolean;
   azOffsetDeg: number;
   altOffsetDeg: number;
   opacity: number;
@@ -1525,9 +1655,10 @@ export interface LandscapeConfig {
 
 export const DEFAULT_LANDSCAPE_CONFIG: LandscapeConfig = {
   preset: "mountain",
+  use3dTerrain: true,
   azOffsetDeg: 0,
   altOffsetDeg: 0,
-  opacity: 0.88,
+  opacity: 0.96,
   nightDimming: true,
   maskMode: "auto_sky_key",
   skyKeyThreshold: 36,

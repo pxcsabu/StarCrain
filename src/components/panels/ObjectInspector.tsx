@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  BookOpen,
   Box,
   Clock,
   Compass,
@@ -348,6 +349,7 @@ export function ObjectInspector() {
   const addAltitudeTarget = useSkyStore((s) => s.addAltitudeTarget);
   const openPanel = useSkyStore((s) => s.openPanel);
   const openPlanet3d = useSkyStore((s) => s.openPlanet3d);
+  const liveSpaceWeather = useSkyStore((s) => s.liveSpaceWeather);
 
   const enriched = useMemo(() => {
     if (!selectedObject) {
@@ -559,7 +561,43 @@ export function ObjectInspector() {
             <TrendingUp className="h-3.5 w-3.5" />
             高度グラフ
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="col-span-2 h-7.5 gap-1.5 px-2 text-[11px]"
+            onClick={() => openPanel("tonight_guide")}
+          >
+            <BookOpen className="h-3.5 w-3.5 text-amber-300" />
+            観望ログ・メシエ記録に記帳
+          </Button>
         </div>
+
+        {/* Live Space Weather Summary when inspecting the Sun */}
+        {selectedObject.id === "sun" && (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-2.5 py-2 text-[11px]">
+            <div className="min-w-0">
+              <div className="font-semibold text-amber-300">宇宙天気・磁気嵐モニター</div>
+              <div className="truncate font-mono-num text-[10px] text-[var(--text-secondary)]">
+                {liveSpaceWeather
+                  ? `Kp ${liveSpaceWeather.current_kp.toFixed(1)} (${liveSpaceWeather.storm_level_ja})${
+                      liveSpaceWeather.solar_wind_km_s !== null
+                        ? ` · 太陽風 ${Math.round(liveSpaceWeather.solar_wind_km_s)} km/s`
+                        : ""
+                    }`
+                  : "NOAA Kp指数・太陽風・オーロラ期待度を確認"}
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 shrink-0 border-amber-400/40 px-2 text-[10px]"
+              onClick={() => openPanel("weather")}
+            >
+              開く
+            </Button>
+          </div>
+        )}
 
         {/* Positional Telemetry */}
         <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/70 p-2.5">

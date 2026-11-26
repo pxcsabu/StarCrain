@@ -1,12 +1,15 @@
 import { memo } from "react";
 import {
   Activity,
+  Award,
   BookOpen,
   Box,
   Calculator,
   CalendarDays,
   Clock,
+  CloudSun,
   Compass,
+  Crosshair,
   Eclipse,
   Flame,
   Globe,
@@ -41,7 +44,10 @@ export type DockOverlayMode = "tools" | "compass" | null;
 const TOOL_ITEMS: { id: Exclude<ActivePanelId, null>; label: string; icon: typeof Sun }[] = [
   { id: "moon_calendar", label: "月齢暦", icon: CalendarDays },
   { id: "meteors", label: "流星群", icon: Moon },
+  { id: "weather", label: "天気予報", icon: CloudSun },
+  { id: "tonight_guide", label: "今夜ガイド", icon: Award },
   { id: "planets", label: "惑星解析", icon: Globe },
+  { id: "polar_align", label: "極軸合わせ", icon: Crosshair },
   { id: "solar3d", label: "3D太陽系", icon: Box },
   { id: "iss_view", label: "ISS地球視点", icon: Satellite },
   { id: "eclipses", label: "食・星食", icon: Eclipse },

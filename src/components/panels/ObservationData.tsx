@@ -578,24 +578,33 @@ export function ObservationData() {
       </div>
 
       {/* Footer Quick Panel Links */}
-      <div className="grid grid-cols-2 gap-1.5 border-t border-[var(--border-subtle)] px-4 py-2.5">
+      <div className="grid grid-cols-3 gap-1.5 border-t border-[var(--border-subtle)] px-4 py-2.5">
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 text-xs"
-          onClick={() => setActivePanel("moon_calendar")}
+          className="h-8 gap-1 text-xs"
+          onClick={() => setActivePanel("weather")}
         >
-          <CalendarDays className="h-3.5 w-3.5" />
-          月齢カレンダー
+          <Cloud className="h-3.5 w-3.5 text-sky-300" />
+          天気予報
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-8 gap-1 text-xs"
+          onClick={() => setActivePanel("moon_calendar")}
+        >
+          <CalendarDays className="h-3.5 w-3.5" />
+          月齢暦
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1 text-xs"
           onClick={() => setActivePanel("meteors")}
         >
           <Sparkles className="h-3.5 w-3.5" />
-          流星群一覧
+          流星群
         </Button>
       </div>
     </aside>

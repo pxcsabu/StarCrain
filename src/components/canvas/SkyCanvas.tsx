@@ -493,6 +493,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
         next.landscapeVersion !== prev.landscapeVersion ||
         next.hipsConfig !== prev.hipsConfig ||
         next.offlineMode !== prev.offlineMode ||
+        next.liveWeather !== prev.liveWeather ||
+        next.showWeatherCloudsOverlay !== prev.showWeatherCloudsOverlay ||
         next.simLockMode !== prev.simLockMode ||
         next.simStepMinutes !== prev.simStepMinutes ||
         next.gyroAzOffsetDeg !== prev.gyroAzOffsetDeg
@@ -886,6 +888,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
               landscapeConfig: st.landscapeConfig,
               hipsConfig: st.hipsConfig,
               offlineMode: st.offlineMode,
+              liveWeather: st.liveWeather,
+              showWeatherCloudsOverlay: st.showWeatherCloudsOverlay,
               skipMeteors: false,
               fastInteractive: true,
               onTextureLoaded: () => {
@@ -931,6 +935,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
                 landscapeConfig: st.landscapeConfig,
                 hipsConfig: st.hipsConfig,
                 offlineMode: st.offlineMode,
+                liveWeather: st.liveWeather,
+                showWeatherCloudsOverlay: st.showWeatherCloudsOverlay,
                 skipMeteors: true,
                 fastInteractive: false,
                 onTextureLoaded: () => {

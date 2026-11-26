@@ -2,6 +2,7 @@ import {
   type CompiledProjectionContext,
   wrapDeg360,
 } from "@/lib/projection";
+import { getThreeTerrainEquirect } from "@/lib/terrain3d";
 import type {
   CustomPanoramaMaskMode,
   LandscapeConfig,
@@ -231,7 +232,7 @@ function buildProceduralPanorama(preset: Exclude<LandscapePresetId, "veil" | "cu
           }
         }
       }
-    } else {
+    } else if (preset === "observatory") {
       // Summit observatory deck: gentle distant mountains + observatory dome silhouette + low railing
       const bgAlt =
         1.8 + 1.9 * Math.sin(ang + 1.2) + 1.2 * Math.cos(3 * ang - 0.4) + 0.5 * Math.sin(7 * ang);
@@ -275,6 +276,28 @@ function buildProceduralPanorama(preset: Exclude<LandscapePresetId, "veil" | "cu
           putPx(x, y, 24 - d * 10, 28 - d * 12, 36 - d * 12, 255);
         }
       }
+    } else {
+      // Desert mesas & wind-rippled dunes 2D fallback
+      const m1 = Math.max(0, 1 - Math.abs(Math.atan2(Math.sin(ang - 1.15), Math.cos(ang - 1.15))) / 0.42);
+      const m2 = Math.max(0, 1 - Math.abs(Math.atan2(Math.sin(ang - 3.65), Math.cos(ang - 3.65))) / 0.36);
+      const mesaAlt = Math.max(
+        m1 > 0.2 ? Math.min(5.2, m1 * 7.8) : 0,
+        m2 > 0.2 ? Math.min(4.6, m2 * 7.0) : 0,
+      );
+      const duneAlt = 0.6 + 0.55 * Math.sin(ang * 5 + 0.8);
+      const topAlt = Math.max(mesaAlt, duneAlt);
+      const topY = horizonY - (topAlt / 90) * horizonY;
+      for (let y = Math.max(0, Math.floor(topY - 2)); y < TEX_H; y++) {
+        if (y < topY - 0.8) continue;
+        const alpha = y < topY ? Math.max(0, 1 - (topY - y)) * 255 : 255;
+        if (y < horizonY + 4 && mesaAlt > duneAlt) {
+          putPx(x, y, 76, 44, 34, alpha);
+        } else {
+          const depth = Math.max(0, (y - horizonY) / horizonY);
+          const ripple = Math.sin(x * 0.14 + y * 0.42) * 3;
+          putPx(x, y, 66 - depth * 22 + ripple, 48 - depth * 18 + ripple, 35 - depth * 14 + ripple, alpha);
+        }
+      }
     }
   }
 
@@ -284,7 +307,7 @@ function buildProceduralPanorama(preset: Exclude<LandscapePresetId, "veil" | "cu
     height: TEX_H,
     data,
     maxOpaqueAltDeg,
-    version: preset === "mountain" ? 1 : preset === "coast" ? 2 : 3,
+    version: preset === "mountain" ? 1 : preset === "coast" ? 2 : preset === "observatory" ? 3 : 4,
   };
   proceduralCache.set(preset, tex);
   return tex;
@@ -640,12 +663,24 @@ export function initCustomPanoramaFromStorage(
   });
 }
 
-function getActiveTexture(config: LandscapeConfig): EquirectTexture | null {
-  if (config.preset === "veil") return null;
+function getActiveTexture(
+  config: LandscapeConfig,
+  frame: SkyFrame,
+): { tex: EquirectTexture | null; is3dRendered: boolean } {
+  if (config.preset === "veil") return { tex: null, is3dRendered: false };
   if (config.preset === "custom") {
-    return customTexture ?? buildProceduralPanorama("mountain");
+    if (customTexture) return { tex: customTexture, is3dRendered: false };
+    if (config.use3dTerrain) {
+      const baked = getThreeTerrainEquirect("mountain", frame, config.nightDimming);
+      if (baked) return { tex: baked, is3dRendered: true };
+    }
+    return { tex: buildProceduralPanorama("mountain"), is3dRendered: false };
   }
-  return buildProceduralPanorama(config.preset);
+  if (config.use3dTerrain) {
+    const baked = getThreeTerrainEquirect(config.preset, frame, config.nightDimming);
+    if (baked) return { tex: baked, is3dRendered: true };
+  }
+  return { tex: buildProceduralPanorama(config.preset), is3dRendered: false };
 }
 
 interface LandscapeScreenCache {
@@ -676,7 +711,7 @@ export function renderPanoramaLandscape(
     return false;
   }
 
-  const tex = getActiveTexture(config);
+  const { tex, is3dRendered } = getActiveTexture(config, frame);
   if (!tex) return false;
 
   const w = params.width;
@@ -686,17 +721,19 @@ export function renderPanoramaLandscape(
   const effOpacity = params.show_below_horizon ? config.opacity * 0.34 : config.opacity;
   const illum = isInverted
     ? 0.25
-    : config.nightDimming
-      ? Math.max(
-          0.16,
-          Math.min(
-            1,
-            0.16 +
-              0.84 * Math.pow(Math.max(0, 1 - frame.sky_palette.star_visibility_factor * 0.85), 0.72) +
-              frame.sky_palette.moonlight_strength * 0.22,
-          ),
-        )
-      : 1.0;
+    : is3dRendered
+      ? 1.0
+      : config.nightDimming
+        ? Math.max(
+            0.16,
+            Math.min(
+              1,
+              0.16 +
+                0.84 * Math.pow(Math.max(0, 1 - frame.sky_palette.star_visibility_factor * 0.85), 0.72) +
+                frame.sky_palette.moonlight_strength * 0.22,
+            ),
+          )
+        : 1.0;
 
   const scale = fastMode ? Math.min(0.24, 420 / Math.max(w, h)) : 0.48;
   const invScale = 1 / scale;

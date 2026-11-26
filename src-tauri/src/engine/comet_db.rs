@@ -418,6 +418,18 @@ impl CometDb {
                 enabled             INTEGER NOT NULL DEFAULT 1,
                 updated_at          INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS observation_logs (
+                id                  TEXT PRIMARY KEY,
+                object_id           TEXT NOT NULL,
+                object_name         TEXT NOT NULL,
+                object_kind         TEXT NOT NULL,
+                observed_at_iso     TEXT NOT NULL,
+                location_name       TEXT NOT NULL,
+                equipment           TEXT NOT NULL,
+                rating              INTEGER NOT NULL DEFAULT 5,
+                notes               TEXT NOT NULL DEFAULT '',
+                created_at          INTEGER NOT NULL DEFAULT 0
+            );
             ",
         )
         .map_err(|e| format!("テーブル初期化失敗: {e}"))?;
@@ -760,6 +772,119 @@ impl CometDb {
     pub fn restore_default_satellites(&self) -> Result<usize, String> {
         self.upsert_satellites_batch(default_satellites(), None)
     }
+
+    pub fn list_observation_logs(&self) -> Result<Vec<ObservationLogRecord>, String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DBロックの取得に失敗しました".to_owned())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, object_id, object_name, object_kind, observed_at_iso,
+                        location_name, equipment, rating, notes, created_at
+                 FROM observation_logs
+                 ORDER BY created_at DESC, id DESC",
+            )
+            .map_err(|e| format!("観望ログ参照エラー: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let rating_i: i64 = row.get(7)?;
+                Ok(ObservationLogRecord {
+                    id: row.get(0)?,
+                    object_id: row.get(1)?,
+                    object_name: row.get(2)?,
+                    object_kind: row.get(3)?,
+                    observed_at_iso: row.get(4)?,
+                    location_name: row.get(5)?,
+                    equipment: row.get(6)?,
+                    rating: rating_i.clamp(1, 5) as u8,
+                    notes: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| format!("観望ログ読み取りエラー: {e}"))?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| format!("観望ログ行デコード失敗: {e}"))?);
+        }
+        Ok(out)
+    }
+
+    pub fn upsert_observation_log(
+        &self,
+        mut rec: ObservationLogRecord,
+    ) -> Result<ObservationLogRecord, String> {
+        let now = now_unix_secs();
+        if rec.id.trim().is_empty() {
+            rec.id = format!("obs:{now}:{}", rec.object_id);
+        }
+        if rec.created_at == 0 {
+            rec.created_at = now;
+        }
+        let rating_clamped = rec.rating.clamp(1, 5);
+        rec.rating = rating_clamped;
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DBロックの取得に失敗しました".to_owned())?;
+        conn.execute(
+            "INSERT INTO observation_logs (
+                id, object_id, object_name, object_kind, observed_at_iso,
+                location_name, equipment, rating, notes, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(id) DO UPDATE SET
+                object_id = excluded.object_id,
+                object_name = excluded.object_name,
+                object_kind = excluded.object_kind,
+                observed_at_iso = excluded.observed_at_iso,
+                location_name = excluded.location_name,
+                equipment = excluded.equipment,
+                rating = excluded.rating,
+                notes = excluded.notes",
+            params![
+                rec.id,
+                rec.object_id,
+                rec.object_name,
+                rec.object_kind,
+                rec.observed_at_iso,
+                rec.location_name,
+                rec.equipment,
+                i64::from(rec.rating),
+                rec.notes,
+                rec.created_at,
+            ],
+        )
+        .map_err(|e| format!("観望ログ保存失敗: {e}"))?;
+        Ok(rec)
+    }
+
+    pub fn delete_observation_log(&self, id: &str) -> Result<bool, String> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| "DBロックの取得に失敗しました".to_owned())?;
+        let n = conn
+            .execute("DELETE FROM observation_logs WHERE id = ?1", params![id])
+            .map_err(|e| format!("観望ログ削除失敗: {e}"))?;
+        Ok(n > 0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObservationLogRecord {
+    pub id: String,
+    pub object_id: String,
+    pub object_name: String,
+    pub object_kind: String,
+    pub observed_at_iso: String,
+    pub location_name: String,
+    pub equipment: String,
+    pub rating: u8,
+    pub notes: String,
+    #[serde(default)]
+    pub created_at: i64,
 }
 
 #[cfg(test)]
@@ -835,5 +960,24 @@ mod tests {
         assert_eq!(db.list_enabled_satellites().len(), 2);
         db.set_satellite_enabled("sat:25544", true).expect("enable sat");
         assert_eq!(db.list_enabled_satellites().len(), 3);
+
+        // Observation logs CRUD
+        let log = db
+            .upsert_observation_log(ObservationLogRecord {
+                id: String::new(),
+                object_id: "M42".into(),
+                object_name: "M42 オリオン大星雲".into(),
+                object_kind: "dso".into(),
+                observed_at_iso: "2026-11-26 22:30".into(),
+                location_name: "明石市".into(),
+                equipment: "70mm 屈折".into(),
+                rating: 5,
+                notes: "トラペジウム明瞭".into(),
+                created_at: 0,
+            })
+            .expect("upsert log");
+        assert_eq!(db.list_observation_logs().unwrap().len(), 1);
+        assert!(db.delete_observation_log(&log.id).unwrap());
+        assert_eq!(db.list_observation_logs().unwrap().len(), 0);
     }
 }
