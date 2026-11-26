@@ -10,6 +10,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_ENTRIES: ChangelogRelease[] = [
   {
+    version: "0.4.1",
+    date: "2026-11-27",
+    kind: "fix",
+    title: "3D地形の高精細PBRテクスチャ化・実影(シャドウ)と接地表現の大幅刷新",
+    items: [
+      "Three.js 3D 地形を画面ネイティブ解像度の GPU 直接投影（1024px キューブマップ＋ミップマップ）へ刷新し、粗いドット感と足元の継ぎ目シームを解消しました",
+      "草原・岩肌・木肌・砂丘・海面波・木製デッキの高精細 PBR アルベド／法線マップ、4段立体樹冠、地面の窪みAO、および太陽・月・星明かり連動の PCF ソフトシャドウを追加しました",
+      "地平線下非表示時に地下の星が地面に透けていた問題を修正し、実際に現地へ立っているような立体感と臨場感を向上させました",
+    ],
+  },
+  {
     version: "0.4.0",
     date: "2026-11-26",
     kind: "feature",

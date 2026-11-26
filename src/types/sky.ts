@@ -1658,7 +1658,7 @@ export const DEFAULT_LANDSCAPE_CONFIG: LandscapeConfig = {
   use3dTerrain: true,
   azOffsetDeg: 0,
   altOffsetDeg: 0,
-  opacity: 0.96,
+  opacity: 1.0,
   nightDimming: true,
   maskMode: "auto_sky_key",
   skyKeyThreshold: 36,

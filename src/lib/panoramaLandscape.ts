@@ -2,7 +2,7 @@ import {
   type CompiledProjectionContext,
   wrapDeg360,
 } from "@/lib/projection";
-import { getThreeTerrainEquirect } from "@/lib/terrain3d";
+import { renderThreeTerrainOnCanvas } from "@/lib/terrain3d";
 import type {
   CustomPanoramaMaskMode,
   LandscapeConfig,
@@ -663,24 +663,12 @@ export function initCustomPanoramaFromStorage(
   });
 }
 
-function getActiveTexture(
-  config: LandscapeConfig,
-  frame: SkyFrame,
-): { tex: EquirectTexture | null; is3dRendered: boolean } {
-  if (config.preset === "veil") return { tex: null, is3dRendered: false };
+function getActiveTexture(config: LandscapeConfig): EquirectTexture | null {
+  if (config.preset === "veil") return null;
   if (config.preset === "custom") {
-    if (customTexture) return { tex: customTexture, is3dRendered: false };
-    if (config.use3dTerrain) {
-      const baked = getThreeTerrainEquirect("mountain", frame, config.nightDimming);
-      if (baked) return { tex: baked, is3dRendered: true };
-    }
-    return { tex: buildProceduralPanorama("mountain"), is3dRendered: false };
+    return customTexture ?? buildProceduralPanorama("mountain");
   }
-  if (config.use3dTerrain) {
-    const baked = getThreeTerrainEquirect(config.preset, frame, config.nightDimming);
-    if (baked) return { tex: baked, is3dRendered: true };
-  }
-  return { tex: buildProceduralPanorama(config.preset), is3dRendered: false };
+  return buildProceduralPanorama(config.preset);
 }
 
 interface LandscapeScreenCache {
@@ -711,7 +699,23 @@ export function renderPanoramaLandscape(
     return false;
   }
 
-  const { tex, is3dRendered } = getActiveTexture(config, frame);
+  // Primary: Native-resolution GPU projection + PBR textures + real soft shadows from Three.js
+  if (config.use3dTerrain) {
+    const preset3d =
+      config.preset === "custom" && !customTexture
+        ? "mountain"
+        : config.preset !== "custom"
+          ? config.preset
+          : null;
+    if (
+      preset3d &&
+      renderThreeTerrainOnCanvas(c, pCtx, panel, frame, preset3d, config, nightVision, isInverted)
+    ) {
+      return true;
+    }
+  }
+
+  const tex = getActiveTexture(config);
   if (!tex) return false;
 
   const w = params.width;
@@ -721,19 +725,17 @@ export function renderPanoramaLandscape(
   const effOpacity = params.show_below_horizon ? config.opacity * 0.34 : config.opacity;
   const illum = isInverted
     ? 0.25
-    : is3dRendered
-      ? 1.0
-      : config.nightDimming
-        ? Math.max(
-            0.16,
-            Math.min(
-              1,
-              0.16 +
-                0.84 * Math.pow(Math.max(0, 1 - frame.sky_palette.star_visibility_factor * 0.85), 0.72) +
-                frame.sky_palette.moonlight_strength * 0.22,
-            ),
-          )
-        : 1.0;
+    : config.nightDimming
+      ? Math.max(
+          0.16,
+          Math.min(
+            1,
+            0.16 +
+              0.84 * Math.pow(Math.max(0, 1 - frame.sky_palette.star_visibility_factor * 0.85), 0.72) +
+              frame.sky_palette.moonlight_strength * 0.22,
+          ),
+        )
+      : 1.0;
 
   const scale = fastMode ? Math.min(0.24, 420 / Math.max(w, h)) : 0.48;
   const invScale = 1 / scale;
