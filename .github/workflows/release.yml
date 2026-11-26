@@ -149,6 +149,11 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -192,7 +197,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Android arm64 release APK
-        run: pnpm exec tauri android build --apk --target aarch64
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "=== Android APK build attempt ${attempt}/3 ==="
+            if pnpm exec tauri android build --apk --target aarch64; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              wait_sec=$((attempt * 20))
+              echo "::warning::Android APK build failed on attempt ${attempt} (often transient Maven Central HTTP 429). Retrying in ${wait_sec}s..."
+              sleep "$wait_sec"
+            fi
+          done
+          echo "::error::Android APK build failed after 3 attempts."
+          exit 1
 
       - name: Zipalign & sign release APK
         shell: bash
