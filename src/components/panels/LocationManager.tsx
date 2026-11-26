@@ -93,6 +93,12 @@ function clampMapPan(x: number, y: number, zoom: number, baseW: number, baseH: n
   };
 }
 
+function formatCompactLatLon(lat: number, lon: number, decimals = 1): string {
+  const ns = lat >= 0 ? "N" : "S";
+  const ew = lon >= 0 ? "E" : "W";
+  return `${Math.abs(lat).toFixed(decimals)}°${ns} ${Math.abs(lon).toFixed(decimals)}°${ew}`;
+}
+
 export function LocationManager() {
   const location = useSkyStore((s) => s.location);
   const locationsList = useSkyStore((s) => s.locationsList);
@@ -351,7 +357,25 @@ export function LocationManager() {
     if (showForm) {
       setForm((f) => ({ ...f, lat_deg: clampedLat, lon_deg: clampedLon }));
     } else {
-      updateLocation({ ...location, lat_deg: clampedLat, lon_deg: clampedLon });
+      const coordLabel = formatCompactLatLon(clampedLat, clampedLon, 1);
+      const prefName = mapMode === "japan" && e.pointerType === "mouse" ? hoveredPref : null;
+      const estHours = mapMode === "japan" ? 9 : Math.max(-12, Math.min(14, Math.round(clampedLon / 15)));
+      const tzOffsetMin = estHours * 60;
+      const tzName = mapMode === "japan" ? "JST" : estHours === 0 ? "UTC" : `UTC${estHours > 0 ? "+" : ""}${estHours}`;
+      setLocation({
+        id: "map_picked",
+        name_ja: prefName ? `${prefName} (${coordLabel})` : coordLabel,
+        name_en: coordLabel,
+        country_ja: mapMode === "japan" ? "日本" : "地図指定",
+        region: prefName ?? "任意座標",
+        category: mapMode === "japan" ? "japan" : "overseas",
+        lat_deg: clampedLat,
+        lon_deg: clampedLon,
+        alt_m: 0,
+        tz_offset_min: tzOffsetMin,
+        tz_name: tzName,
+        is_default: false,
+      });
     }
   };
 
@@ -657,7 +681,7 @@ export function LocationManager() {
 
             <div className="flex items-center justify-between gap-2 px-0.5 text-[10px] text-[var(--text-secondary)]">
               <span className="truncate font-medium text-[var(--text-primary)]">
-                {hoveredCity ?? hoveredPref ?? "クリック指定 / ホイール拡大"}
+                {hoveredCity ?? hoveredPref ?? `選択中: ${location.name_ja}`}
               </span>
               <span className="shrink-0 font-mono-num">
                 {displayCoords.lat >= 0
@@ -836,7 +860,7 @@ export function LocationManager() {
                     </span>
                   </div>
                   <div className="font-mono-num text-[10px] text-[var(--text-secondary)]">
-                    {loc.lat_deg.toFixed(2)}°N, {loc.lon_deg.toFixed(2)}°E · {loc.tz_name}
+                    {formatCompactLatLon(loc.lat_deg, loc.lon_deg, 2)} · {loc.tz_name}
                   </div>
                 </button>
                 <div className="flex items-center gap-0.5">
