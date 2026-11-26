@@ -630,7 +630,7 @@ export function DisplaySettings() {
                 onClick={() => {
                   void clearCustomPanoramaStorage().then(() => {
                     setLandscapeConfig({
-                      preset: landscapeConfig.preset === "custom" ? "mountain" : landscapeConfig.preset,
+                      preset: landscapeConfig.preset === "custom" ? "veil" : landscapeConfig.preset,
                       customFileName: null,
                     });
                     bumpLandscapeVersion();
@@ -701,16 +701,6 @@ export function DisplaySettings() {
 
           {landscapeConfig.preset !== "veil" && (
             <div className="space-y-1.5 text-[11px]">
-              {landscapeConfig.preset !== "custom" && (
-                <label className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1.5">
-                  <span className="font-medium">Three.js 3D地形モデルを使用</span>
-                  <input
-                    type="checkbox"
-                    checked={landscapeConfig.use3dTerrain}
-                    onChange={(e) => setLandscapeConfig({ use3dTerrain: e.target.checked })}
-                  />
-                </label>
-              )}
               <div>
                 <div className="flex justify-between text-[10px] text-[var(--text-muted)]">
                   <span>北の方位オフセット</span>

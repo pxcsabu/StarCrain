@@ -60,7 +60,7 @@ export const TimelineBar = memo(function TimelineBar() {
 
   return (
     <footer
-      className={`pointer-events-none flex items-end justify-between gap-2 ${
+      className={`pointer-events-none relative z-20 flex items-end justify-between gap-2 ${
         activePanel !== null ? "hidden sm:flex" : "flex"
       }`}
     >

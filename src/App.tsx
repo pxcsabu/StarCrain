@@ -442,41 +442,42 @@ export function App() {
               type="button"
               aria-label="閉じる"
               onClick={dismissMobileSheets}
-              className="starcrane-fade-enter pointer-events-auto fixed inset-0 z-0 bg-black/45 backdrop-blur-md sm:hidden"
-              style={{ WebkitBackdropFilter: "blur(12px)" }}
+              className="pointer-events-auto fixed inset-0 z-0 bg-transparent sm:hidden"
             />
           )}
 
-          <div className="relative z-10 flex w-full flex-col items-stretch gap-2 sm:h-full sm:w-auto sm:min-h-0 sm:flex-row sm:items-start sm:gap-2.5">
+          <div className="relative z-10 flex min-h-0 max-h-full w-full flex-col items-stretch gap-2 sm:h-full sm:w-auto sm:flex-row sm:items-start sm:gap-2.5">
             <DesktopNavigationRail overlay={dockOverlay} setOverlay={setDockOverlay} />
 
             {/* Mobile Tool / Compass / Active Sheet */}
             {dockOverlay === "tools" && (
-              <div className="starcrane-sheet-enter sm:hidden">
+              <div className="starcrane-sheet-enter flex min-h-0 max-h-full flex-col sm:hidden">
                 <ToolLauncherSheet onClose={() => setDockOverlay(null)} />
               </div>
             )}
             {dockOverlay === "compass" && (
-              <div className="starcrane-sheet-enter sm:hidden">
+              <div className="starcrane-sheet-enter flex min-h-0 max-h-full flex-col sm:hidden">
                 <CompassSheet onClose={() => setDockOverlay(null)} />
               </div>
             )}
 
             {activePanel !== null && dockOverlay === null && (
-              <div className="starcrane-sheet-enter starcrane-panel-host pointer-events-auto w-full sm:hidden">
+              <div className="starcrane-sheet-enter starcrane-panel-host pointer-events-auto flex min-h-0 max-h-full w-full flex-col sm:hidden">
                 {renderPanelBody(activePanel)}
               </div>
             )}
           </div>
 
           {selectedObject && dockOverlay === null && activePanel === null && (
-            <div className="starcrane-sheet-enter starcrane-panel-host pointer-events-auto relative z-10 w-full sm:hidden">
+            <div className="starcrane-sheet-enter starcrane-panel-host pointer-events-auto relative z-10 flex min-h-0 max-h-full w-full flex-col sm:hidden">
               <ObjectInspector />
             </div>
           )}
         </div>
 
-        <TimelineBar />
+        <div className={hasMobileSheet ? "hidden sm:block" : undefined}>
+          <TimelineBar />
+        </div>
         <MobileBottomNav overlay={dockOverlay} setOverlay={setDockOverlay} />
       </div>
 

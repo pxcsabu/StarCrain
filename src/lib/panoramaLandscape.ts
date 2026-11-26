@@ -2,7 +2,6 @@ import {
   type CompiledProjectionContext,
   wrapDeg360,
 } from "@/lib/projection";
-import { renderThreeTerrainOnCanvas } from "@/lib/terrain3d";
 import type {
   CustomPanoramaMaskMode,
   LandscapeConfig,
@@ -697,22 +696,6 @@ export function renderPanoramaLandscape(
     frame.view_mode === "other_star"
   ) {
     return false;
-  }
-
-  // Primary: Native-resolution GPU projection + PBR textures + real soft shadows from Three.js
-  if (config.use3dTerrain) {
-    const preset3d =
-      config.preset === "custom" && !customTexture
-        ? "mountain"
-        : config.preset !== "custom"
-          ? config.preset
-          : null;
-    if (
-      preset3d &&
-      renderThreeTerrainOnCanvas(c, pCtx, panel, frame, preset3d, config, nightVision, isInverted)
-    ) {
-      return true;
-    }
   }
 
   const tex = getActiveTexture(config);

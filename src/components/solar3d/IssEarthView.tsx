@@ -1237,7 +1237,7 @@ export function IssEarthView() {
       </div>
 
       {/* 3D Viewport */}
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-[#02040d]">
+      <div className="relative min-h-[18rem] flex-1 overflow-hidden bg-[#02040d]">
         <div ref={mountRef} className="h-full w-full touch-none" />
 
         {/* Optional ISS Cupola Window Silhouette Overlay */}

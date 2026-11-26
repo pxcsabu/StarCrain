@@ -77,7 +77,8 @@ const UNITS_STORAGE_KEY = "starcrane-units-v1";
 const FOV_STORAGE_KEY = "starcrane-fov-v1";
 const OFFLINE_STORAGE_KEY = "starcrane-offline-v1";
 const WEATHER_CLOUDS_STORAGE_KEY = "starcrane-weather-clouds-v1";
-const LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v1";
+const LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v2";
+const LEGACY_LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v1";
 const METEOR_ANIM_STORAGE_KEY = "starcrane:meteors_on:v1";
 const HIPS_STORAGE_KEY = "starcrane-hips-v1";
 
@@ -132,56 +133,70 @@ const DEFAULT_ALTITUDE_TARGETS: AltitudeTargetItem[] = [
   { id: "jupiter", nameJa: "木星", kind: "planet", raDeg: 75, decDeg: 22, color: ALTITUDE_TARGET_COLORS[3] },
 ];
 
+function parseLandscapeFields(
+  p: Partial<LandscapeConfig>,
+  preset: LandscapeConfig["preset"],
+): LandscapeConfig {
+  const validMask =
+    p.maskMode === "auto_sky_key" ||
+    p.maskMode === "horizon_cut" ||
+    p.maskMode === "alpha_only"
+      ? p.maskMode
+      : DEFAULT_LANDSCAPE_CONFIG.maskMode;
+  return {
+    preset,
+    azOffsetDeg:
+      typeof p.azOffsetDeg === "number" && Number.isFinite(p.azOffsetDeg)
+        ? Math.max(-180, Math.min(180, p.azOffsetDeg))
+        : DEFAULT_LANDSCAPE_CONFIG.azOffsetDeg,
+    altOffsetDeg:
+      typeof p.altOffsetDeg === "number" && Number.isFinite(p.altOffsetDeg)
+        ? Math.max(-20, Math.min(20, p.altOffsetDeg))
+        : DEFAULT_LANDSCAPE_CONFIG.altOffsetDeg,
+    opacity:
+      typeof p.opacity === "number" && Number.isFinite(p.opacity)
+        ? Math.max(0.1, Math.min(1, p.opacity))
+        : DEFAULT_LANDSCAPE_CONFIG.opacity,
+    nightDimming:
+      typeof p.nightDimming === "boolean"
+        ? p.nightDimming
+        : DEFAULT_LANDSCAPE_CONFIG.nightDimming,
+    maskMode: validMask,
+    skyKeyThreshold:
+      typeof p.skyKeyThreshold === "number" && Number.isFinite(p.skyKeyThreshold)
+        ? Math.max(8, Math.min(90, p.skyKeyThreshold))
+        : DEFAULT_LANDSCAPE_CONFIG.skyKeyThreshold,
+    customFileName: typeof p.customFileName === "string" ? p.customFileName : null,
+  };
+}
+
 function loadLandscapeConfig(): LandscapeConfig {
   if (typeof window === "undefined") return { ...DEFAULT_LANDSCAPE_CONFIG };
   try {
     const raw = window.localStorage.getItem(LANDSCAPE_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_LANDSCAPE_CONFIG };
-    const p = JSON.parse(raw) as Partial<LandscapeConfig>;
-    const validPreset =
-      p.preset === "veil" ||
-      p.preset === "mountain" ||
-      p.preset === "coast" ||
-      p.preset === "observatory" ||
-      p.preset === "desert" ||
-      p.preset === "custom"
-        ? p.preset
+    if (raw) {
+      const p = JSON.parse(raw) as Partial<LandscapeConfig>;
+      const validPreset =
+        p.preset === "veil" ||
+        p.preset === "mountain" ||
+        p.preset === "coast" ||
+        p.preset === "observatory" ||
+        p.preset === "desert" ||
+        p.preset === "custom"
+          ? p.preset
+          : DEFAULT_LANDSCAPE_CONFIG.preset;
+      return parseLandscapeFields(p, validPreset);
+    }
+    const legacyRaw = window.localStorage.getItem(LEGACY_LANDSCAPE_STORAGE_KEY);
+    if (!legacyRaw) return { ...DEFAULT_LANDSCAPE_CONFIG };
+    const lp = JSON.parse(legacyRaw) as Partial<LandscapeConfig>;
+    const migratedPreset =
+      lp.preset === "custom" && typeof lp.customFileName === "string"
+        ? "custom"
         : DEFAULT_LANDSCAPE_CONFIG.preset;
-    const validMask =
-      p.maskMode === "auto_sky_key" ||
-      p.maskMode === "horizon_cut" ||
-      p.maskMode === "alpha_only"
-        ? p.maskMode
-        : DEFAULT_LANDSCAPE_CONFIG.maskMode;
-    return {
-      preset: validPreset,
-      use3dTerrain:
-        typeof p.use3dTerrain === "boolean"
-          ? p.use3dTerrain
-          : DEFAULT_LANDSCAPE_CONFIG.use3dTerrain,
-      azOffsetDeg:
-        typeof p.azOffsetDeg === "number" && Number.isFinite(p.azOffsetDeg)
-          ? Math.max(-180, Math.min(180, p.azOffsetDeg))
-          : DEFAULT_LANDSCAPE_CONFIG.azOffsetDeg,
-      altOffsetDeg:
-        typeof p.altOffsetDeg === "number" && Number.isFinite(p.altOffsetDeg)
-          ? Math.max(-20, Math.min(20, p.altOffsetDeg))
-          : DEFAULT_LANDSCAPE_CONFIG.altOffsetDeg,
-      opacity:
-        typeof p.opacity === "number" && Number.isFinite(p.opacity)
-          ? Math.max(0.1, Math.min(1, p.opacity))
-          : DEFAULT_LANDSCAPE_CONFIG.opacity,
-      nightDimming:
-        typeof p.nightDimming === "boolean"
-          ? p.nightDimming
-          : DEFAULT_LANDSCAPE_CONFIG.nightDimming,
-      maskMode: validMask,
-      skyKeyThreshold:
-        typeof p.skyKeyThreshold === "number" && Number.isFinite(p.skyKeyThreshold)
-          ? Math.max(8, Math.min(90, p.skyKeyThreshold))
-          : DEFAULT_LANDSCAPE_CONFIG.skyKeyThreshold,
-      customFileName: typeof p.customFileName === "string" ? p.customFileName : null,
-    };
+    const migrated = parseLandscapeFields(lp, migratedPreset);
+    persistLandscapeConfig(migrated);
+    return migrated;
   } catch {
     return { ...DEFAULT_LANDSCAPE_CONFIG };
   }

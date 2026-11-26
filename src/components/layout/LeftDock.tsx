@@ -139,8 +139,8 @@ export function ToolLauncherSheet({
   };
 
   return (
-    <div className="liquid-glass-sheet pointer-events-auto flex w-full flex-col gap-3 p-3.5 sm:w-[19.5rem]">
-      <div className="flex items-center justify-between px-1">
+    <div className="liquid-glass-sheet pointer-events-auto flex max-h-full min-h-0 w-full flex-col gap-3 overflow-hidden p-3.5 sm:w-[19.5rem]">
+      <div className="flex shrink-0 items-center justify-between px-1">
         <span className="text-xs font-semibold text-[var(--text-primary)]">天文ツール</span>
         <div className="flex items-center gap-1">
           <button
@@ -166,7 +166,7 @@ export function ToolLauncherSheet({
       </div>
 
       {/* Quick Filter Chips */}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex shrink-0 flex-wrap gap-1.5">
         <button
           type="button"
           onClick={() =>
@@ -276,26 +276,31 @@ export function ToolLauncherSheet({
       </div>
 
       {/* 3-Column Material You Tonal Tiles */}
-      <div className="grid max-h-[52dvh] grid-cols-3 gap-1.5 overflow-y-auto pr-0.5">
-        {TOOL_ITEMS.map((item) => {
-          const Icon = item.icon;
-          const active = openPanels.includes(item.id);
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => openTool(item.id)}
-              className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl p-2.5 text-center transition-all active:scale-95 ${
-                active
-                  ? "m3-tonal-active font-semibold"
-                  : "bg-white/[0.04] text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)]"
-              }`}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="text-[10.5px] leading-tight">{item.label}</span>
-            </button>
-          );
-        })}
+      <div
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5 touch-pan-y sm:max-h-[52dvh]"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        <div className="grid grid-cols-3 gap-1.5">
+          {TOOL_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const active = openPanels.includes(item.id);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => openTool(item.id)}
+                className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl p-2.5 text-center transition-all active:scale-95 ${
+                  active
+                    ? "m3-tonal-active font-semibold"
+                    : "bg-white/[0.04] text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)]"
+                }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="text-[10.5px] leading-tight">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -490,7 +495,7 @@ export function MobileBottomNav({
   return (
     <nav
       aria-label="モバイルナビゲーション"
-      className="liquid-glass-pill pointer-events-auto grid w-full grid-cols-5 items-center px-1.5 py-1 sm:hidden"
+      className="liquid-glass-pill pointer-events-auto relative z-20 grid w-full grid-cols-5 items-center px-1.5 py-1 sm:hidden"
     >
       <RailItem
         active={isSkyFocus}

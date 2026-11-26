@@ -105,7 +105,7 @@ export const TopBar = memo(function TopBar() {
   };
 
   return (
-    <header className="pointer-events-none flex flex-nowrap items-center justify-between gap-1.5 sm:gap-2">
+    <header className="pointer-events-none relative z-20 flex flex-nowrap items-center justify-between gap-1.5 sm:gap-2">
       {/* Left Capsule: Date/Time + Quick Step */}
       <div className="liquid-glass-pill pointer-events-auto flex shrink-0 items-center gap-0.5 px-1 py-1 sm:px-1.5">
         <Button
