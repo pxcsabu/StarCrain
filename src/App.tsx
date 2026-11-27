@@ -391,7 +391,7 @@ export function App() {
       <SkyCanvas />
 
       {/* Desktop / Tablet Free-Floating Multi-Window Layer */}
-      <div className="pointer-events-none fixed inset-0 z-20 hidden sm:block">
+      <div className="pointer-events-none fixed inset-0 z-40 hidden sm:block">
         {renderedPanels.map((panelId, idx) => {
           const isExiting = !openPanels.includes(panelId);
           const isTopPanel =
@@ -433,7 +433,7 @@ export function App() {
       </div>
 
       {/* Main Chrome & Mobile Sheet Stage */}
-      <div className="pointer-events-none absolute inset-0 z-40 flex flex-col justify-between gap-2 pl-[max(0.625rem,env(safe-area-inset-left))] pr-[max(0.625rem,env(safe-area-inset-right))] pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:pl-[max(0.75rem,env(safe-area-inset-left))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] sm:pt-[max(0.75rem,env(safe-area-inset-top))] sm:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-none absolute inset-0 z-30 flex flex-col justify-between gap-2 pl-[max(0.625rem,env(safe-area-inset-left))] pr-[max(0.625rem,env(safe-area-inset-right))] pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:pl-[max(0.75rem,env(safe-area-inset-left))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] sm:pt-[max(0.75rem,env(safe-area-inset-top))] sm:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <TopBar />
 
         <div className="relative flex min-h-0 flex-1 flex-col justify-end sm:flex-row sm:items-start sm:justify-between sm:gap-3">

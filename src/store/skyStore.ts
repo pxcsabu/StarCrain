@@ -35,6 +35,7 @@ import {
   type NightWeatherForecast,
   type ObjectDetails,
   type ObjectTrail,
+  OBSERVER_BODIES,
   type ObserverBodyId,
   type PickedObject,
   type PlanetTrackOverlay,
@@ -81,6 +82,10 @@ const LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v2";
 const LEGACY_LANDSCAPE_STORAGE_KEY = "starcrane:landscape:v1";
 const METEOR_ANIM_STORAGE_KEY = "starcrane:meteors_on:v1";
 const HIPS_STORAGE_KEY = "starcrane-hips-v1";
+const DISPLAY_PREFS_STORAGE_KEY = "starcrane-display-prefs-v1";
+const LAST_LOCATION_STORAGE_KEY = "starcrane-last-location-v1";
+
+let suppressDisplayPersist = false;
 
 function loadHipsConfig(): HipsSurveyConfig {
   if (typeof window === "undefined") return { ...DEFAULT_HIPS_CONFIG };
@@ -377,6 +382,281 @@ function persistLocations(list: LocationPreset[]): void {
   }
 }
 
+interface PersistedDisplayPrefs {
+  projectionMode: ProjectionMode;
+  viewMode: SkyViewMode;
+  observerBody: ObserverBodyId;
+  originStarHip: number;
+  centerAzDeg: number;
+  centerAltDeg: number;
+  centerRaDeg: number;
+  centerDecDeg: number;
+  fovDeg: number;
+  zoom: number;
+  limitingMag: number;
+  skyRealismLevel: number;
+  refractionEnabled: boolean;
+  showBelowHorizon: boolean;
+  layers: SkyLayerVisibility;
+  meteorRateMultiplier: number;
+  meteorShowAllRadiants: boolean;
+  showSatellites: boolean;
+  simStepMinutes: number;
+  gyroAzOffsetDeg: number;
+}
+
+const DEFAULT_DISPLAY_PREFS: PersistedDisplayPrefs = {
+  projectionMode: "free_direction",
+  viewMode: "normal",
+  observerBody: "Mars",
+  originStarHip: 71683,
+  centerAzDeg: 180,
+  centerAltDeg: 30,
+  centerRaDeg: 0,
+  centerDecDeg: 20,
+  fovDeg: 90,
+  zoom: 1,
+  limitingMag: 6.5,
+  skyRealismLevel: 2,
+  refractionEnabled: true,
+  showBelowHorizon: false,
+  layers: { ...DEFAULT_LAYERS },
+  meteorRateMultiplier: 1,
+  meteorShowAllRadiants: false,
+  showSatellites: true,
+  simStepMinutes: 60,
+  gyroAzOffsetDeg: 0,
+};
+
+function clampFinite(val: unknown, min: number, max: number, fallback: number): number {
+  return typeof val === "number" && Number.isFinite(val)
+    ? Math.min(max, Math.max(min, val))
+    : fallback;
+}
+
+function sanitizeLayers(raw: unknown): SkyLayerVisibility {
+  const next: SkyLayerVisibility = { ...DEFAULT_LAYERS };
+  if (!raw || typeof raw !== "object") return next;
+  const rec = raw as Partial<Record<keyof SkyLayerVisibility, unknown>>;
+  for (const key of Object.keys(DEFAULT_LAYERS) as (keyof SkyLayerVisibility)[]) {
+    if (key === "constellationLines") {
+      const lm = rec.constellationLines;
+      if (lm === "off" || lm === "simple" || lm === "standard" || lm === "detailed") {
+        next.constellationLines = lm;
+      }
+    } else if (typeof rec[key] === "boolean") {
+      (next as unknown as Record<string, boolean>)[key] = rec[key] as boolean;
+    }
+  }
+  return next;
+}
+
+function loadDisplayPrefs(): PersistedDisplayPrefs {
+  if (typeof window === "undefined") {
+    return { ...DEFAULT_DISPLAY_PREFS, layers: { ...DEFAULT_LAYERS } };
+  }
+  try {
+    const raw = window.localStorage.getItem(DISPLAY_PREFS_STORAGE_KEY);
+    if (!raw) {
+      return { ...DEFAULT_DISPLAY_PREFS, layers: { ...DEFAULT_LAYERS } };
+    }
+    const p = JSON.parse(raw) as Partial<PersistedDisplayPrefs>;
+    const projectionMode: ProjectionMode = PROJECTION_META.some(
+      (m) => m.mode === p.projectionMode,
+    )
+      ? (p.projectionMode as ProjectionMode)
+      : DEFAULT_DISPLAY_PREFS.projectionMode;
+    const viewMode: SkyViewMode =
+      p.viewMode === "normal" ||
+      p.viewMode === "precession" ||
+      p.viewMode === "proper_motion" ||
+      p.viewMode === "other_planet" ||
+      p.viewMode === "other_star"
+        ? p.viewMode
+        : DEFAULT_DISPLAY_PREFS.viewMode;
+    const observerBody: ObserverBodyId = OBSERVER_BODIES.some(
+      (b) => b.id === p.observerBody,
+    )
+      ? (p.observerBody as ObserverBodyId)
+      : DEFAULT_DISPLAY_PREFS.observerBody;
+    return {
+      projectionMode,
+      viewMode,
+      observerBody,
+      originStarHip:
+        typeof p.originStarHip === "number" &&
+        Number.isFinite(p.originStarHip) &&
+        p.originStarHip > 0
+          ? Math.round(p.originStarHip)
+          : DEFAULT_DISPLAY_PREFS.originStarHip,
+      centerAzDeg:
+        typeof p.centerAzDeg === "number" && Number.isFinite(p.centerAzDeg)
+          ? wrapDeg360(p.centerAzDeg)
+          : DEFAULT_DISPLAY_PREFS.centerAzDeg,
+      centerAltDeg: clampFinite(p.centerAltDeg, -85, 89.5, DEFAULT_DISPLAY_PREFS.centerAltDeg),
+      centerRaDeg:
+        typeof p.centerRaDeg === "number" && Number.isFinite(p.centerRaDeg)
+          ? wrapDeg360(p.centerRaDeg)
+          : DEFAULT_DISPLAY_PREFS.centerRaDeg,
+      centerDecDeg: clampFinite(p.centerDecDeg, -89.5, 89.5, DEFAULT_DISPLAY_PREFS.centerDecDeg),
+      fovDeg:
+        typeof p.fovDeg === "number" && Number.isFinite(p.fovDeg)
+          ? effectiveFovDeg(projectionMode, p.fovDeg)
+          : DEFAULT_DISPLAY_PREFS.fovDeg,
+      zoom: clampFinite(p.zoom, 0.5, 8, DEFAULT_DISPLAY_PREFS.zoom),
+      limitingMag: clampFinite(p.limitingMag, 1.0, 11.0, DEFAULT_DISPLAY_PREFS.limitingMag),
+      skyRealismLevel:
+        typeof p.skyRealismLevel === "number" && Number.isFinite(p.skyRealismLevel)
+          ? Math.min(3, Math.max(0, Math.round(p.skyRealismLevel)))
+          : DEFAULT_DISPLAY_PREFS.skyRealismLevel,
+      refractionEnabled:
+        typeof p.refractionEnabled === "boolean"
+          ? p.refractionEnabled
+          : DEFAULT_DISPLAY_PREFS.refractionEnabled,
+      showBelowHorizon:
+        typeof p.showBelowHorizon === "boolean"
+          ? p.showBelowHorizon
+          : DEFAULT_DISPLAY_PREFS.showBelowHorizon,
+      layers: sanitizeLayers(p.layers),
+      meteorRateMultiplier: clampFinite(
+        p.meteorRateMultiplier,
+        0.5,
+        5,
+        DEFAULT_DISPLAY_PREFS.meteorRateMultiplier,
+      ),
+      meteorShowAllRadiants:
+        typeof p.meteorShowAllRadiants === "boolean"
+          ? p.meteorShowAllRadiants
+          : DEFAULT_DISPLAY_PREFS.meteorShowAllRadiants,
+      showSatellites:
+        typeof p.showSatellites === "boolean"
+          ? p.showSatellites
+          : DEFAULT_DISPLAY_PREFS.showSatellites,
+      simStepMinutes:
+        typeof p.simStepMinutes === "number" &&
+        Number.isFinite(p.simStepMinutes) &&
+        p.simStepMinutes > 0
+          ? p.simStepMinutes
+          : DEFAULT_DISPLAY_PREFS.simStepMinutes,
+      gyroAzOffsetDeg: clampFinite(
+        p.gyroAzOffsetDeg,
+        -45,
+        45,
+        DEFAULT_DISPLAY_PREFS.gyroAzOffsetDeg,
+      ),
+    };
+  } catch {
+    return { ...DEFAULT_DISPLAY_PREFS, layers: { ...DEFAULT_LAYERS } };
+  }
+}
+
+function persistDisplayPrefs(s: PersistedDisplayPrefs): void {
+  if (typeof window === "undefined") return;
+  try {
+    const payload: PersistedDisplayPrefs = {
+      projectionMode: s.projectionMode,
+      viewMode: s.viewMode,
+      observerBody: s.observerBody,
+      originStarHip: s.originStarHip,
+      centerAzDeg: s.centerAzDeg,
+      centerAltDeg: s.centerAltDeg,
+      centerRaDeg: s.centerRaDeg,
+      centerDecDeg: s.centerDecDeg,
+      fovDeg: s.fovDeg,
+      zoom: s.zoom,
+      limitingMag: s.limitingMag,
+      skyRealismLevel: s.skyRealismLevel,
+      refractionEnabled: s.refractionEnabled,
+      showBelowHorizon: s.showBelowHorizon,
+      layers: s.layers,
+      meteorRateMultiplier: s.meteorRateMultiplier,
+      meteorShowAllRadiants: s.meteorShowAllRadiants,
+      showSatellites: s.showSatellites,
+      simStepMinutes: s.simStepMinutes,
+      gyroAzOffsetDeg: s.gyroAzOffsetDeg,
+    };
+    window.localStorage.setItem(DISPLAY_PREFS_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage write errors
+  }
+}
+
+function hasDisplayPrefsChanged(a: PersistedDisplayPrefs, b: PersistedDisplayPrefs): boolean {
+  return (
+    a.projectionMode !== b.projectionMode ||
+    a.viewMode !== b.viewMode ||
+    a.observerBody !== b.observerBody ||
+    a.originStarHip !== b.originStarHip ||
+    a.centerAzDeg !== b.centerAzDeg ||
+    a.centerAltDeg !== b.centerAltDeg ||
+    a.centerRaDeg !== b.centerRaDeg ||
+    a.centerDecDeg !== b.centerDecDeg ||
+    a.fovDeg !== b.fovDeg ||
+    a.zoom !== b.zoom ||
+    a.limitingMag !== b.limitingMag ||
+    a.skyRealismLevel !== b.skyRealismLevel ||
+    a.refractionEnabled !== b.refractionEnabled ||
+    a.showBelowHorizon !== b.showBelowHorizon ||
+    a.layers !== b.layers ||
+    a.meteorRateMultiplier !== b.meteorRateMultiplier ||
+    a.meteorShowAllRadiants !== b.meteorShowAllRadiants ||
+    a.showSatellites !== b.showSatellites ||
+    a.simStepMinutes !== b.simStepMinutes ||
+    a.gyroAzOffsetDeg !== b.gyroAzOffsetDeg
+  );
+}
+
+function loadLastLocation(): LocationPreset | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_LOCATION_STORAGE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<LocationPreset>;
+    if (
+      !p ||
+      typeof p !== "object" ||
+      typeof p.id !== "string" ||
+      !p.id ||
+      typeof p.name_ja !== "string" ||
+      !p.name_ja ||
+      typeof p.lat_deg !== "number" ||
+      !Number.isFinite(p.lat_deg) ||
+      typeof p.lon_deg !== "number" ||
+      !Number.isFinite(p.lon_deg)
+    ) {
+      return null;
+    }
+    return {
+      id: p.id,
+      name_ja: p.name_ja,
+      name_en: typeof p.name_en === "string" ? p.name_en : p.name_ja,
+      country_ja: typeof p.country_ja === "string" ? p.country_ja : "",
+      region: typeof p.region === "string" ? p.region : "",
+      lat_deg: Math.min(89.9, Math.max(-89.9, p.lat_deg)),
+      lon_deg: Math.min(180, Math.max(-180, p.lon_deg)),
+      alt_m: typeof p.alt_m === "number" && Number.isFinite(p.alt_m) ? p.alt_m : 0,
+      tz_offset_min:
+        typeof p.tz_offset_min === "number" && Number.isFinite(p.tz_offset_min)
+          ? p.tz_offset_min
+          : 0,
+      tz_name: typeof p.tz_name === "string" ? p.tz_name : "UTC",
+      category: typeof p.category === "string" ? p.category : "custom",
+      is_default: Boolean(p.is_default),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistLastLocation(loc: LocationPreset): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_LOCATION_STORAGE_KEY, JSON.stringify(loc));
+  } catch {
+    // Ignore storage write errors
+  }
+}
+
 export interface SkyState {
   initialized: boolean;
   loading: boolean;
@@ -597,6 +877,8 @@ let activeFrameRequests = 0;
 let lastSatFetchMs = 0;
 const initialColorState = loadSavedColors();
 const initialUnitPrefs = loadUnitPrefs();
+const initialDisplayPrefs = loadDisplayPrefs();
+const initialLastLocation = loadLastLocation();
 
 export const useSkyStore = create<SkyState>((set, get) => ({
   initialized: false,
@@ -609,24 +891,24 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   dsoBuffer: null,
   dsoCount: 0,
   skyFrame: null,
-  location: AKASHI_DEFAULT,
+  location: initialLastLocation ?? AKASHI_DEFAULT,
   locationsList: [AKASHI_DEFAULT],
   jdUt: nowUtcJd(),
-  projectionMode: "free_direction",
-  viewMode: "normal",
-  observerBody: "Mars",
-  originStarHip: 71683,
-  centerAzDeg: 180,
-  centerAltDeg: 30,
-  centerRaDeg: 0,
-  centerDecDeg: 20,
-  fovDeg: 90,
-  zoom: 1,
-  limitingMag: 6.5,
-  skyRealismLevel: 2,
-  refractionEnabled: true,
-  showBelowHorizon: false,
-  layers: { ...DEFAULT_LAYERS },
+  projectionMode: initialDisplayPrefs.projectionMode,
+  viewMode: initialDisplayPrefs.viewMode,
+  observerBody: initialDisplayPrefs.observerBody,
+  originStarHip: initialDisplayPrefs.originStarHip,
+  centerAzDeg: initialDisplayPrefs.centerAzDeg,
+  centerAltDeg: initialDisplayPrefs.centerAltDeg,
+  centerRaDeg: initialDisplayPrefs.centerRaDeg,
+  centerDecDeg: initialDisplayPrefs.centerDecDeg,
+  fovDeg: initialDisplayPrefs.fovDeg,
+  zoom: initialDisplayPrefs.zoom,
+  limitingMag: initialDisplayPrefs.limitingMag,
+  skyRealismLevel: initialDisplayPrefs.skyRealismLevel,
+  refractionEnabled: initialDisplayPrefs.refractionEnabled,
+  showBelowHorizon: initialDisplayPrefs.showBelowHorizon,
+  layers: initialDisplayPrefs.layers,
   colorPreset: initialColorState.preset,
   customColors: initialColorState.colors,
   selectedObject: null,
@@ -644,8 +926,8 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   angleFormat: initialUnitPrefs.angleFormat,
   selectedMeteorShowerCode: null,
   meteorAnimationEnabled: loadMeteorAnimPref(),
-  meteorShowAllRadiants: false,
-  meteorRateMultiplier: 1,
+  meteorShowAllRadiants: initialDisplayPrefs.meteorShowAllRadiants,
+  meteorRateMultiplier: initialDisplayPrefs.meteorRateMultiplier,
   landscapeConfig: loadLandscapeConfig(),
   landscapeVersion: 0,
   hipsConfig: loadHipsConfig(),
@@ -655,7 +937,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   comets: [],
   cometsVersion: 0,
   fovPresets: loadFovPresets(),
-  showSatellites: true,
+  showSatellites: initialDisplayPrefs.showSatellites,
   satellites: [],
   satellitesVersion: 0,
   highlightedSatPass: null,
@@ -667,7 +949,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   simPlaying: false,
   simDirection: 1,
   simTarget: "time",
-  simStepMinutes: 60,
+  simStepMinutes: initialDisplayPrefs.simStepMinutes,
   simLatStepDeg: 1.0,
   simAzStepDeg: 2.0,
   simLockMode: "none",
@@ -676,7 +958,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   trailEnabled: false,
   trails: {},
   gyroEnabled: false,
-  gyroAzOffsetDeg: 0,
+  gyroAzOffsetDeg: initialDisplayPrefs.gyroAzOffsetDeg,
   gyroStatus: null,
   gpsLoading: false,
   gpsStatus: null,
@@ -701,6 +983,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
     if (get().initialized || get().loading) return;
     set({ loading: true, error: null });
     try {
+      const savedLastLoc = loadLastLocation();
       if (isTauri()) {
         const [rawStars, rawDsos, assets] = await Promise.all([
           invoke<ArrayBuffer>("get_sky_star_buffer"),
@@ -712,6 +995,14 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         const mergedLocs = loadSavedLocations(assets.locations);
         const defaultLoc =
           mergedLocs.find((l) => l.is_default) ?? mergedLocs[0] ?? AKASHI_DEFAULT;
+        const resolvedLoc = savedLastLoc
+          ? (mergedLocs.find(
+              (l) =>
+                l.id === savedLastLoc.id &&
+                Math.abs(l.lat_deg - savedLastLoc.lat_deg) < 1e-6 &&
+                Math.abs(l.lon_deg - savedLastLoc.lon_deg) < 1e-6,
+            ) ?? savedLastLoc)
+          : defaultLoc;
         set({
           staticAssets: assets,
           baseStarBuffer: starBuffer,
@@ -720,13 +1011,14 @@ export const useSkyStore = create<SkyState>((set, get) => ({
           dsoBuffer,
           dsoCount: Math.floor(dsoBuffer.length / 7),
           locationsList: mergedLocs,
-          location: defaultLoc,
+          location: resolvedLoc,
           initialized: true,
           loading: false,
         });
       } else {
         set({
           locationsList: [AKASHI_DEFAULT],
+          location: savedLastLoc ?? AKASHI_DEFAULT,
           initialized: true,
           loading: false,
         });
@@ -736,6 +1028,9 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       }
       if (get().startupDemo) {
         set({ autoRunRealtime: true });
+      }
+      if (get().viewMode === "proper_motion" || get().viewMode === "other_star") {
+        await get().reloadStarBufferForMode();
       }
       await Promise.all([get().refreshFrame(), get().refreshComets(), get().refreshSatellites()]);
     } catch (err) {
@@ -955,9 +1250,15 @@ export const useSkyStore = create<SkyState>((set, get) => ({
     const presets = get().staticAssets?.locations ?? [AKASHI_DEFAULT];
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LOCATIONS_STORAGE_KEY);
+      window.localStorage.removeItem(LAST_LOCATION_STORAGE_KEY);
     }
     const def = presets.find((l) => l.is_default) ?? presets[0] ?? AKASHI_DEFAULT;
-    set({ locationsList: presets, location: def });
+    suppressDisplayPersist = true;
+    try {
+      set({ locationsList: presets, location: def });
+    } finally {
+      suppressDisplayPersist = false;
+    }
     void get().refreshFrame();
   },
 
@@ -1860,6 +2161,11 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       window.localStorage.removeItem(OFFLINE_STORAGE_KEY);
       window.localStorage.removeItem(FOV_STORAGE_KEY);
       window.localStorage.removeItem(HIPS_STORAGE_KEY);
+      window.localStorage.removeItem(DISPLAY_PREFS_STORAGE_KEY);
+      window.localStorage.removeItem(LAST_LOCATION_STORAGE_KEY);
+      window.localStorage.removeItem(LANDSCAPE_STORAGE_KEY);
+      window.localStorage.removeItem(WEATHER_CLOUDS_STORAGE_KEY);
+      window.localStorage.removeItem(METEOR_ANIM_STORAGE_KEY);
     }
     useThemeStore.getState().setTheme("dark");
     const clk = useClockStore.getState();
@@ -1867,24 +2173,29 @@ export const useSkyStore = create<SkyState>((set, get) => ({
     clk.setHourlyChime("off");
     clk.setClockTheme("starry");
 
-    set({
-      showObservationOnStartup: false,
-      startupDemo: false,
-      offlineMode: false,
-      unitSystem: "metric",
-      angleFormat: "dms",
-      projectionMode: "free_direction",
-      limitingMag: 6.5,
-      skyRealismLevel: 2,
-      refractionEnabled: true,
-      showBelowHorizon: false,
-      layers: { ...DEFAULT_LAYERS },
-      colorPreset: defPalette.id,
-      customColors: { ...defPalette.colors },
-      fovPresets: defFov,
-      hipsConfig: { ...DEFAULT_HIPS_CONFIG },
-      autoRunRealtime: false,
-    });
+    suppressDisplayPersist = true;
+    try {
+      set({
+        showObservationOnStartup: false,
+        startupDemo: false,
+        offlineMode: false,
+        unitSystem: "metric",
+        angleFormat: "dms",
+        ...DEFAULT_DISPLAY_PREFS,
+        layers: { ...DEFAULT_LAYERS },
+        colorPreset: defPalette.id,
+        customColors: { ...defPalette.colors },
+        fovPresets: defFov,
+        hipsConfig: { ...DEFAULT_HIPS_CONFIG },
+        landscapeConfig: { ...DEFAULT_LANDSCAPE_CONFIG },
+        showWeatherCloudsOverlay: false,
+        meteorAnimationEnabled: true,
+        autoRunRealtime: false,
+      });
+    } finally {
+      suppressDisplayPersist = false;
+    }
+    void get().reloadStarBufferForMode();
     get().resetLocationsToPresets();
   },
 
@@ -1975,3 +2286,15 @@ export const useSkyStore = create<SkyState>((set, get) => ({
     }
   },
 }));
+
+if (typeof window !== "undefined") {
+  useSkyStore.subscribe((state, prev) => {
+    if (suppressDisplayPersist) return;
+    if (hasDisplayPrefsChanged(state, prev)) {
+      persistDisplayPrefs(state);
+    }
+    if (state.initialized && state.location !== prev.location) {
+      persistLastLocation(state.location);
+    }
+  });
+}
