@@ -416,7 +416,7 @@ void main() {
         }
       }
     }
-    rotRad = northRot + posAngDeg * DEG2RAD;
+    rotRad = northRot - posAngDeg * DEG2RAD;
   }
 
   vec2 local = aCorner * quadHalf;

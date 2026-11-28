@@ -523,7 +523,24 @@ export function selectShowcasePhotoKey(dso: DsoEntry): string | null {
   return null;
 }
 
-function buildFeatherSkySpriteFromImage(img: HTMLImageElement): HTMLCanvasElement {
+const REAL_DSO_SPRITE_ADJUST: Record<
+  string,
+  { rotationDeg: number; centerX: number; centerY: number; contain: boolean }
+> = {
+  // public/photos/m31.jpg (330x218): core=(180,104), M32=(159,68), M110=(160,165)
+  // Astrometric alignment to North-up / East-left (PA ~35 deg E of N): +209 deg CW
+  m31: {
+    rotationDeg: 209,
+    centerX: 180 / 330,
+    centerY: 104 / 218,
+    contain: true,
+  },
+};
+
+function buildFeatherSkySpriteFromImage(
+  img: HTMLImageElement,
+  key?: string,
+): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = DSO_SIZE;
   c.height = DSO_SIZE;
@@ -532,10 +549,30 @@ function buildFeatherSkySpriteFromImage(img: HTMLImageElement): HTMLCanvasElemen
 
   const iw = img.naturalWidth || img.width;
   const ih = img.naturalHeight || img.height;
-  const side = Math.min(iw, ih);
-  const sx = (iw - side) * 0.5;
-  const sy = (ih - side) * 0.5;
-  ctx.drawImage(img, sx, sy, side, side, 0, 0, DSO_SIZE, DSO_SIZE);
+  const adj = key ? REAL_DSO_SPRITE_ADJUST[key] : undefined;
+  if (adj && iw > 0 && ih > 0) {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, DSO_SIZE, DSO_SIZE);
+    const scale = adj.contain
+      ? DSO_SIZE / Math.max(iw, ih)
+      : DSO_SIZE / Math.min(iw, ih);
+    ctx.save();
+    ctx.translate(DSO_HALF, DSO_HALF);
+    ctx.rotate((adj.rotationDeg * Math.PI) / 180);
+    ctx.drawImage(
+      img,
+      -adj.centerX * iw * scale,
+      -adj.centerY * ih * scale,
+      iw * scale,
+      ih * scale,
+    );
+    ctx.restore();
+  } else {
+    const side = Math.min(iw, ih);
+    const sx = (iw - side) * 0.5;
+    const sy = (ih - side) * 0.5;
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, DSO_SIZE, DSO_SIZE);
+  }
 
   const imgData = ctx.getImageData(0, 0, DSO_SIZE, DSO_SIZE);
   const d = imgData.data;
@@ -547,7 +584,7 @@ function buildFeatherSkySpriteFromImage(img: HTMLImageElement): HTMLCanvasElemen
     for (const py of [4, DSO_SIZE - 5]) {
       const idx = (py * DSO_SIZE + i) * 4;
       const lum = Math.max(d[idx], d[idx + 1], d[idx + 2]);
-      if (lum < 95) {
+      if (lum > 2 && lum < 95) {
         lumSum += lum;
         lumCount++;
       }
@@ -609,7 +646,7 @@ export function getRealDsoSkySprite(
     realDsoLoading.add(key);
     const img = new Image();
     img.onload = () => {
-      realDsoNormal.set(key, buildFeatherSkySpriteFromImage(img));
+      realDsoNormal.set(key, buildFeatherSkySpriteFromImage(img, key));
       realDsoLoading.delete(key);
       onLoaded?.();
     };

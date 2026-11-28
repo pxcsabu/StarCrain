@@ -1367,7 +1367,7 @@ function drawDsoKindSymbol(
 
   if (kindCode === 0) {
     c.beginPath();
-    c.ellipse(x, y, r * ratio, r, posAngDeg * DEG2RAD, 0, Math.PI * 2);
+    c.ellipse(x, y, r * ratio, r, -posAngDeg * DEG2RAD, 0, Math.PI * 2);
     c.stroke();
   } else if (kindCode === 1) {
     c.beginPath();
@@ -2285,8 +2285,8 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
           ? Math.cos(cullCone.halfConeRad + 0.16)
           : -2;
 
-      const mwStep = fastInteractive ? 12 : 6;
-      const mwScale = fastInteractive ? 1.32 : 1.0;
+      const mwStep = 6;
+      const mwScale = 1.0;
 
       c.save();
       for (let idx = 0, len = clouds.length; idx + 5 < len; idx += mwStep) {
@@ -2781,7 +2781,7 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
                 c.fillStyle = style;
                 lastFillStyle = style;
               }
-              if (r <= (fastInteractive ? 1.75 : 1.2)) {
+              if (r <= 1.2) {
                 c.fillRect(px - r * 0.5, py - r * 0.5, r * 1.35, r * 1.35);
               } else {
                 c.beginPath();

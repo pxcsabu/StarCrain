@@ -255,15 +255,11 @@ export function enumerateVisibleHipsTiles(
 export function chooseHipsOrder(
   pxPerDeg: number,
   maxOrder: number,
-  fastInteractive: boolean,
+  _fastInteractive: boolean,
 ): number {
   // Base order 0 tile spans ~58.6 deg; aim for ~170..340 screen px per tile
   const ideal = Math.round(Math.log2(Math.max(1, (58.63 * pxPerDeg) / 230)));
-  let order = Math.max(0, Math.min(Math.min(7, maxOrder), ideal));
-  if (fastInteractive && order > 0) {
-    order -= 1;
-  }
-  return order;
+  return Math.max(0, Math.min(Math.min(7, maxOrder), ideal));
 }
 
 export function collectAllSkyHipsTiles(maxOrder = 2): [number, number][] {
