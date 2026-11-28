@@ -12,6 +12,7 @@
     --glass-bg-inactive: rgba(12, 18, 34, 0.78);
     --glass-border: rgba(255, 255, 255, 0.14);
     --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 10px 28px rgba(0, 0, 0, 0.42);
+    --glass-blur: blur(8px) saturate(125%);
     --tonal-container: rgba(168, 199, 250, 0.2);
     --tonal-fg: #d3e3fd;
     --border-subtle: rgba(255, 255, 255, 0.12);
@@ -75,6 +76,62 @@
       sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--accent-primary);
+  }
+
+  [data-theme="night-vision"] input[type="checkbox"],
+  [data-theme="night-vision"] input[type="radio"] {
+    -webkit-appearance: none;
+    appearance: none;
+    position: relative;
+    display: inline-grid;
+    place-content: center;
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    min-height: 14px;
+    border: 1.5px solid rgba(239, 68, 68, 0.58);
+    background-color: rgba(40, 4, 4, 0.85);
+    vertical-align: middle;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  [data-theme="night-vision"] input[type="checkbox"] {
+    border-radius: 3.5px;
+  }
+
+  [data-theme="night-vision"] input[type="radio"] {
+    border-radius: 9999px;
+  }
+
+  [data-theme="night-vision"] input[type="checkbox"]:checked {
+    background-color: #dc2626;
+    border-color: #ef4444;
+  }
+
+  [data-theme="night-vision"] input[type="checkbox"]:checked::before {
+    content: "";
+    width: 9px;
+    height: 9px;
+    background-color: #240303;
+    clip-path: polygon(14% 48%, 0 62%, 41% 100%, 100% 20%, 85% 6%, 40% 72%);
+  }
+
+  [data-theme="night-vision"] input[type="radio"]:checked {
+    border-color: #ef4444;
+  }
+
+  [data-theme="night-vision"] input[type="radio"]:checked::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background-color: #ef4444;
+  }
 }
 
 .font-mono-num {
@@ -91,16 +148,16 @@
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(12px) saturate(145%);
-  backdrop-filter: blur(12px) saturate(145%);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 .liquid-glass-pill {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(12px) saturate(145%);
-  backdrop-filter: blur(12px) saturate(145%);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-radius: 9999px;
 }
 
@@ -108,9 +165,16 @@
   background: var(--glass-bg-strong);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(14px) saturate(145%);
-  backdrop-filter: blur(14px) saturate(145%);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-radius: 28px;
+}
+
+.backdrop-blur-sm,
+.backdrop-blur-md,
+.backdrop-blur-lg {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 .starcrane-floating-window {
@@ -133,8 +197,8 @@
 
 .starcrane-floating-window[data-multi="true"][data-focused="false"] > .starcrane-floating-surface {
   background: var(--glass-bg-inactive);
-  -webkit-backdrop-filter: blur(8px) saturate(125%);
-  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 .starcrane-floating-window[data-interacting="true"] {
@@ -142,8 +206,8 @@
 }
 
 .starcrane-floating-window[data-interacting="true"] > .starcrane-floating-surface {
-  -webkit-backdrop-filter: blur(8px) saturate(125%);
-  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 @keyframes starcrane-win-in {
@@ -224,8 +288,8 @@
   background: var(--glass-bg-strong) !important;
   border-color: var(--glass-border) !important;
   box-shadow: var(--glass-shadow) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(145%) !important;
-  backdrop-filter: blur(14px) saturate(145%) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  backdrop-filter: var(--glass-blur) !important;
   border-radius: 28px !important;
 }
 
@@ -269,8 +333,8 @@
   .liquid-glass-sheet,
   .liquid-glass-pill {
     background: rgba(10, 16, 32, 0.56);
-    -webkit-backdrop-filter: blur(18px) saturate(155%);
-    backdrop-filter: blur(18px) saturate(155%);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
   }
 
   [data-theme="night-vision"] .liquid-glass-sheet,
@@ -289,8 +353,8 @@
     max-height: 74dvh !important;
     border-radius: 28px 28px 20px 20px !important;
     background: rgba(10, 16, 32, 0.56) !important;
-    -webkit-backdrop-filter: blur(18px) saturate(155%) !important;
-    backdrop-filter: blur(18px) saturate(155%) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    backdrop-filter: var(--glass-blur) !important;
   }
 
   .starcrane-panel-host .overflow-y-auto {

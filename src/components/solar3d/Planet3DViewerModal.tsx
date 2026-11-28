@@ -211,7 +211,6 @@ export function Planet3DViewerModal() {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 backdrop-blur-md sm:p-5"
-      style={{ WebkitBackdropFilter: "blur(14px)" }}
       onClick={() => openPlanet3d(null)}
     >
       <div

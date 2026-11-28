@@ -2468,25 +2468,30 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     }
 
     // High-Definition Real-Photo & HD Vector Deep-Sky Textures (M31, M42, M45, etc.)
-    if (layers.zoomTextures && !isOtherStar && staticAssets && effFov < 130 && effectivePalette.star_visibility_factor > 0.2) {
+    if (
+      layers.zoomTextures &&
+      !hipsConfig.enabled &&
+      !isOtherStar &&
+      staticAssets &&
+      effFov < 130 &&
+      effectivePalette.star_visibility_factor > 0.2
+    ) {
       c.save();
       c.globalCompositeOperation = isInverted ? "multiply" : "screen";
       const dsoTexMaxMag = Math.min(11.5, limitingMag + 3.2);
+      const maxDim = Math.max(width, height);
       const buckets = getDsoTextureBuckets(staticAssets.dsos);
       const texCandidates = effFov >= 65 ? buckets.showcase : buckets.zoomCandidates;
       for (const dso of texCandidates) {
+        if (dso.messier === 43) continue;
+        const cleanId = dso.id.trim().toUpperCase().replace(/\s+/g, "");
+        if (cleanId === "NGC884" || cleanId === "NGC0884") continue;
+
         const showcaseKey = selectShowcasePhotoKey(dso);
         const isShowcase = showcaseKey !== null;
         if (!isShowcase) {
           if (dso.messier == null && (dso.mag ?? 99) > dsoTexMaxMag) continue;
         }
-        const majArcmin =
-          dso.messier === 45
-            ? Math.max(dso.maj_ax_arcmin ?? 110, 110)
-            : Math.max(dso.maj_ax_arcmin ?? 12, dso.messier ? 16 : 8);
-        const rawAngR = (majArcmin / 120) * pxPerDeg;
-        const angR = isShowcase ? Math.max(rawAngR, 7.5) : rawAngR;
-        if (angR < 4.5) continue;
 
         if (
           !projectJ2000RaDec(
@@ -2504,20 +2509,21 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
         }
         const dx = scratch[0];
         const dy = scratch[1];
-        if (dx < -angR || dx > width + angR || dy < -angR || dy > height + angR) continue;
         if (canCullHorizon) {
           const dRa = dso.ra_deg * DEG2RAD;
           const dDec = dso.dec_deg * DEG2RAD;
           const cd = Math.cos(dDec);
           const uz = cd * Math.cos(dRa) * m20 + cd * Math.sin(dRa) * m21 + Math.sin(dDec) * m22;
-          if (uz < -0.06) continue;
+          if (uz < -0.14) continue;
         }
 
         let northRot = 0;
+        let localPxPerDeg = pxPerDeg;
+        const stepDeg = dso.dec_deg > 89 ? -0.15 : 0.15;
         if (
           projectJ2000RaDec(
             dso.ra_deg,
-            Math.min(89.9, dso.dec_deg + 0.25),
+            dso.dec_deg + stepDeg,
             mJ2000ToEnu,
             mJ2000ToApp,
             skyPCtx,
@@ -2526,17 +2532,42 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
             scratch,
           )
         ) {
-          const ndx = scratch[0] - dx;
-          const ndy = scratch[1] - dy;
-          if (Math.hypot(ndx, ndy) > 0.2) {
+          const sign = stepDeg > 0 ? 1 : -1;
+          const ndx = (scratch[0] - dx) * sign;
+          const ndy = (scratch[1] - dy) * sign;
+          const northDist = Math.hypot(ndx, ndy);
+          if (northDist > 0.05) {
             northRot = Math.atan2(ndy, ndx) + Math.PI * 0.5;
+            localPxPerDeg = northDist / Math.abs(stepDeg);
           }
         }
 
+        const majArcmin =
+          dso.messier === 45
+            ? Math.max(dso.maj_ax_arcmin ?? 110, 110)
+            : Math.max(dso.maj_ax_arcmin ?? 12, dso.messier ? 16 : 8);
+        const rawAngR = (majArcmin / 120) * localPxPerDeg;
+        const angR = isShowcase ? Math.max(rawAngR, 7.5) : rawAngR;
+        if (angR < 4.5) continue;
+
+        const texSize = angR * 2.35;
+        const halfDraw = texSize * 0.5;
+        if (dx < -halfDraw || dx > width + halfDraw || dy < -halfDraw || dy > height + halfDraw) {
+          continue;
+        }
+
         const realSprite =
-          !isInverted && !hipsConfig.enabled && isShowcase
+          !isInverted && isShowcase
             ? getRealDsoSkySprite(dso, nightVision, onTextureLoaded)
             : null;
+        const fadeStart = realSprite ? maxDim * 3.5 : maxDim * 2.4;
+        const fadeEnd = realSprite ? maxDim * 7.5 : maxDim * 5.2;
+        const overZoomFade =
+          texSize <= fadeStart
+            ? 1
+            : Math.max(0, 1 - (texSize - fadeStart) / (fadeEnd - fadeStart));
+        if (overZoomFade <= 0.01) continue;
+
         const texKey = selectDsoTextureKey(dso);
         const isEdgeOnSprite = texKey === "M104";
         const paRad = -((dso.pos_ang_deg ?? 25) * DEG2RAD);
@@ -2548,8 +2579,10 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
               : dso.messier === 104
                 ? 0.38
                 : 0.78;
-        const fade = Math.min(1, (angR - 4.2) / 10) * effectivePalette.star_visibility_factor;
-        const texSize = Math.min(Math.max(width, height) * 1.15, angR * 2.5);
+        const fade =
+          Math.min(1, (angR - 4.2) / 10) *
+          effectivePalette.star_visibility_factor *
+          overZoomFade;
         const sprite = realSprite ?? getDsoTextureSprite(texKey, nightVision);
 
         c.save();

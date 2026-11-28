@@ -503,7 +503,6 @@ export function getLunarTextureCanvas(nightVision: boolean): HTMLCanvasElement {
 const SHOWCASE_NGC_KEYS = new Set([
   "NGC253",
   "NGC869",
-  "NGC884",
   "NGC2237",
   "NGC3372",
   "NGC5139",
@@ -512,6 +511,7 @@ const SHOWCASE_NGC_KEYS = new Set([
 ]);
 
 export function selectShowcasePhotoKey(dso: DsoEntry): string | null {
+  if (dso.messier === 43) return null;
   if (dso.messier != null) {
     const key = `m${dso.messier}`;
     if (getBundledPhotoMeta(key)) return key;
