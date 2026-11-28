@@ -58,6 +58,7 @@ pub fn run() {
             commands::sky::get_sky_static_assets,
             commands::sky::compute_sky_frame,
             commands::sky::pick_sky_object,
+            commands::sky::resolve_sky_object_by_index,
             commands::sky::get_day_special_times,
             commands::sky::get_object_details,
             commands::sky::search_sky_objects,

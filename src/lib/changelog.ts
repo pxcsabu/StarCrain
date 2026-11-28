@@ -10,6 +10,18 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_ENTRIES: ChangelogRelease[] = [
   {
+    version: "0.5.0",
+    date: "2026-11-28",
+    kind: "feature",
+    title: "WebGL2 / WebGL1 ハイブリッド描画エンジン＆高速O(1)空間インデックスピック",
+    items: [
+      "12万恒星と1.3万DSO楕円・シンボルをWebGL2（非対応時はWebGL1）GPUシェーダーで一括描画し、パン・ズームやアニメーション時の描画速度を大幅に向上しました",
+      "天の川・HiPS・星座線・グリッド・文字ラベル・輝星光条・地平線パノラマは前後Canvas 2Dレイヤーに分離し、星やDSOがくすまず鮮明に表示されます",
+      "設定＞一般タブに「描画エンジン設定（自動 / WebGL優先 / Canvas 2D互換）」を追加し、WebGL初期化失敗やコンテキストロスト時に自動Canvas 2Dフォールバックを行います",
+      "DSOバイナリ転送へ実軸比・位置角・元カタログIDを追加し、天体タップ判定を空間グリッドによるローカル高速探索＋Rust O(1)照会へ最適化しました",
+    ],
+  },
+  {
     version: "0.4.5",
     date: "2026-11-28",
     kind: "fix",

@@ -72,26 +72,27 @@ pub fn get_catalog_status(store: State<'_, CatalogStore>) -> CatalogStatus {
     store.status()
 }
 
-fn pack_star_vecs_to_bytes(entries: &[(Vec3, f32, f32)]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(entries.len() * 20);
-    for &(v, mag, ci) in entries {
+fn pack_star_vecs_to_bytes(entries: &[(Vec3, f32, f32, u32)]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(entries.len() * 24);
+    for &(v, mag, ci, star_idx) in entries {
         bytes.extend_from_slice(&(v.x as f32).to_le_bytes());
         bytes.extend_from_slice(&(v.y as f32).to_le_bytes());
         bytes.extend_from_slice(&(v.z as f32).to_le_bytes());
         bytes.extend_from_slice(&mag.to_le_bytes());
         bytes.extend_from_slice(&ci.to_le_bytes());
+        bytes.extend_from_slice(&star_idx.to_le_bytes());
     }
     bytes
 }
 
-/// Pack all stars sorted by magnitude ascending into little-endian `f32`
-/// quintuples `[x_j2000, y_j2000, z_j2000, mag, ci]` (20 bytes/star).
+/// Pack all stars sorted by magnitude ascending into little-endian 24-byte records:
+/// `[x_j2000: f32, y_j2000: f32, z_j2000: f32, mag: f32, ci: f32, star_idx: u32]`.
 pub fn build_sky_star_bytes(store: &CatalogStore) -> Vec<u8> {
     let stars = &store.stars.stars;
     let mut order: Vec<usize> = (0..stars.len()).collect();
     order.sort_unstable_by(|&a, &b| stars[a].mag.total_cmp(&stars[b].mag));
 
-    let mut bytes = Vec::with_capacity(stars.len() * 20);
+    let mut bytes = Vec::with_capacity(stars.len() * 24);
     for idx in order {
         let s = &stars[idx];
         let (sd, cd) = f64::from(s.dec_rad).sin_cos();
@@ -104,12 +105,13 @@ pub fn build_sky_star_bytes(store: &CatalogStore) -> Vec<u8> {
         bytes.extend_from_slice(&z.to_le_bytes());
         bytes.extend_from_slice(&s.mag.to_le_bytes());
         bytes.extend_from_slice(&s.ci.to_le_bytes());
+        bytes.extend_from_slice(&(idx as u32).to_le_bytes());
     }
     bytes
 }
 
-/// Return all stars sorted by magnitude ascending, packed as little-endian `f32`
-/// quintuples `[x_j2000, y_j2000, z_j2000, mag, ci]` (20 bytes/star).
+/// Return all stars sorted by magnitude ascending, packed as little-endian 24-byte records
+/// `[x_j2000: f32, y_j2000: f32, z_j2000: f32, mag: f32, ci: f32, star_idx: u32]`.
 #[tauri::command]
 pub fn get_sky_star_buffer(store: State<'_, CatalogStore>) -> tauri::ipc::Response {
     tauri::ipc::Response::new(build_sky_star_bytes(&store))
@@ -135,7 +137,8 @@ fn dso_kind_code(obj_type: &str) -> f32 {
 }
 
 /// Pack all DSO entries (~13,000+) sorted with Messier first then magnitude ascending into
-/// little-endian `f32` septuples `[x_j2000, y_j2000, z_j2000, mag, maj_ax_arcmin, kind_code, messier_num]`.
+/// little-endian 40-byte records (`DSO_STRIDE = 10`):
+/// `[x_j2000, y_j2000, z_j2000, mag, maj_ax_arcmin, axis_ratio, pos_ang_deg, kind_code, messier_num, dso_idx: u32]`.
 pub fn build_sky_dso_bytes(store: &CatalogStore) -> Vec<u8> {
     let mut order: Vec<usize> = (0..store.dsos.len()).collect();
     order.sort_unstable_by(|&a, &b| {
@@ -149,7 +152,7 @@ pub fn build_sky_dso_bytes(store: &CatalogStore) -> Vec<u8> {
         }
     });
 
-    let mut bytes = Vec::with_capacity(order.len() * 28);
+    let mut bytes = Vec::with_capacity(order.len() * 40);
     for idx in order {
         let d = &store.dsos[idx];
         let (sd, cd) = d.dec_deg.to_radians().sin_cos();
@@ -160,14 +163,24 @@ pub fn build_sky_dso_bytes(store: &CatalogStore) -> Vec<u8> {
         let mag = d.mag.unwrap_or(14.5);
         let maj = d.maj_ax_arcmin.unwrap_or(6.0);
         let kind = dso_kind_code(&d.obj_type);
+        let axis_ratio = match (d.maj_ax_arcmin, d.min_ax_arcmin) {
+            (Some(mj), Some(mn)) if mj > 0.05 && mn > 0.0 => (mn / mj).clamp(0.18, 1.0),
+            _ => if kind == 0.0 { 0.55 } else { 1.0 },
+        };
+        let pos_ang_deg = d
+            .pos_ang_deg
+            .unwrap_or(if kind == 0.0 { 30.0 } else { 0.0 });
         let messier_num = d.messier.map_or(0.0, f32::from);
         bytes.extend_from_slice(&x.to_le_bytes());
         bytes.extend_from_slice(&y.to_le_bytes());
         bytes.extend_from_slice(&z.to_le_bytes());
         bytes.extend_from_slice(&mag.to_le_bytes());
         bytes.extend_from_slice(&maj.to_le_bytes());
+        bytes.extend_from_slice(&axis_ratio.to_le_bytes());
+        bytes.extend_from_slice(&pos_ang_deg.to_le_bytes());
         bytes.extend_from_slice(&kind.to_le_bytes());
         bytes.extend_from_slice(&messier_num.to_le_bytes());
+        bytes.extend_from_slice(&(idx as u32).to_le_bytes());
     }
     bytes
 }
@@ -184,12 +197,13 @@ pub fn build_proper_motion_star_bytes(
     max_mag: f32,
 ) -> Vec<u8> {
     let dt_years = years_from_j2000.clamp(-100_000.0, 100_000.0);
-    let mut moved: Vec<(Vec3, f32, f32)> = store
+    let mut moved: Vec<(Vec3, f32, f32, u32)> = store
         .stars
         .stars
         .par_iter()
-        .filter(|s| s.mag <= max_mag)
-        .map(|s| {
+        .enumerate()
+        .filter(|(_, s)| s.mag <= max_mag)
+        .map(|(idx, s)| {
             let (eq_new, _) = propagate_proper_motion(
                 f64::from(s.ra_rad),
                 f64::from(s.dec_rad),
@@ -198,7 +212,7 @@ pub fn build_proper_motion_star_bytes(
                 f64::from(s.dist_pc),
                 dt_years,
             );
-            (equatorial_to_vec3(eq_new), s.mag, s.ci)
+            (equatorial_to_vec3(eq_new), s.mag, s.ci, idx as u32)
         })
         .collect();
     moved.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
@@ -224,9 +238,9 @@ pub fn build_reprojected_star_bytes(
     max_mag: f32,
 ) -> Result<Vec<u8>, String> {
     let stars = reproject_stars_from_star(&store.stars, origin_hip, max_mag)?;
-    let mut vecs: Vec<(Vec3, f32, f32)> = stars
+    let mut vecs: Vec<(Vec3, f32, f32, u32)> = stars
         .into_iter()
-        .map(|s| (equatorial_to_vec3(s.eq_j2000), s.mag, s.ci))
+        .map(|s| (equatorial_to_vec3(s.eq_j2000), s.mag, s.ci, s.star_idx))
         .collect();
     vecs.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
     Ok(pack_star_vecs_to_bytes(&vecs))
@@ -975,6 +989,172 @@ pub struct PickedObject {
     pub extra_info: String,
 }
 
+fn build_star_picked_object(
+    store: &CatalogStore,
+    star: &crate::engine::catalog::StarRecord,
+    guide_ja: Option<&str>,
+    eq_app: Equatorial,
+    hor: Horizontal,
+    sep: f64,
+) -> PickedObject {
+    let proper = store.stars.proper_name(star);
+    let bayer = store.stars.bayer(star);
+    let con = store.stars.constellation_code(star).unwrap_or("");
+    let title_en = if !proper.is_empty() {
+        proper.to_owned()
+    } else if !bayer.is_empty() {
+        format!("{bayer} {con}")
+    } else if star.hip > 0 {
+        format!("HIP {}", star.hip)
+    } else {
+        format!("Star #{}", star.id)
+    };
+    let title_ja = guide_ja.map(str::to_owned).unwrap_or_else(|| title_en.clone());
+    let dist_ly = f64::from(star.dist_pc) * 3.261_56;
+    let dist_text = if star.dist_pc > 0.0 && star.dist_pc < 99_000.0 {
+        format!("{dist_ly:.1} 光年")
+    } else {
+        "距離不明".into()
+    };
+    PickedObject {
+        kind: "star".into(),
+        id: if star.hip > 0 {
+            format!("HIP {}", star.hip)
+        } else {
+            format!("STAR {}", star.id)
+        },
+        name_ja: title_ja,
+        name_en: title_en,
+        constellation: (!con.is_empty()).then(|| con.to_owned()),
+        mag: Some(f64::from(star.mag)),
+        ra_deg: eq_app.ra_deg,
+        dec_deg: eq_app.dec_deg,
+        az_deg: hor.az_deg,
+        alt_deg: hor.alt_deg,
+        dist_text,
+        angular_sep_deg: sep,
+        extra_info: format!("色指数 B-V {:.2}", star.ci),
+    }
+}
+
+fn build_dso_picked_object(
+    dso: &crate::engine::catalog::DsoEntry,
+    eq_app: Equatorial,
+    hor: Horizontal,
+    sep: f64,
+) -> PickedObject {
+    let m_label = dso
+        .messier
+        .map(|m| format!("M{m}"))
+        .unwrap_or_else(|| dso.id.clone());
+    let name_ja = dso
+        .name_ja
+        .clone()
+        .map(|j| format!("{m_label} {j}"))
+        .unwrap_or_else(|| m_label.clone());
+    PickedObject {
+        kind: "dso".into(),
+        id: m_label,
+        name_ja,
+        name_en: dso.name_en.clone(),
+        constellation: Some(dso.constellation.clone()),
+        mag: dso.mag.map(f64::from),
+        ra_deg: eq_app.ra_deg,
+        dec_deg: eq_app.dec_deg,
+        az_deg: hor.az_deg,
+        alt_deg: hor.alt_deg,
+        dist_text: dso.obj_type.clone(),
+        angular_sep_deg: sep,
+        extra_info: dso
+            .maj_ax_arcmin
+            .map(|a| format!("視直径 {a:.1}'"))
+            .unwrap_or_else(|| dso.obj_type.clone()),
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResolveSkyObjectRequest {
+    pub kind: String,
+    pub index: u32,
+    pub angular_sep_deg: f64,
+    pub jd_ut: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub refraction: bool,
+}
+
+/// O(1) index resolution for a star or DSO picked on the frontend spatial grid.
+pub fn resolve_sky_object_by_index_impl(
+    req: &ResolveSkyObjectRequest,
+    store: &CatalogStore,
+) -> Option<PickedObject> {
+    let last = last_deg(req.jd_ut, req.lon_deg);
+    let jd_tt = ut_to_tt_jd(req.jd_ut);
+    let (mat, _) = j2000_to_apparent_matrix_internal(jd_tt);
+
+    match req.kind.as_str() {
+        "star" => {
+            if req.index == u32::MAX {
+                return None;
+            }
+            let star = store.stars.stars.get(req.index as usize)?;
+            let eq_j2000 = Equatorial {
+                ra_deg: wrap_deg_360(f64::from(star.ra_rad).to_degrees()),
+                dec_deg: f64::from(star.dec_rad).to_degrees(),
+            };
+            let eq_app = vec3_to_equatorial(mat3_mul_vec(&mat, equatorial_to_vec3(eq_j2000)));
+            let mut hor = equatorial_to_horizontal(eq_app, req.lat_deg, last);
+            if req.refraction {
+                hor.alt_deg = apply_standard_refraction(hor.alt_deg);
+            }
+            let guide_ja = (star.hip > 0)
+                .then(|| {
+                    store
+                        .star_guides
+                        .iter()
+                        .find(|g| g.hip == star.hip)
+                        .map(|g| g.name_ja.as_str())
+                })
+                .flatten();
+            Some(build_star_picked_object(
+                store,
+                star,
+                guide_ja,
+                eq_app,
+                hor,
+                req.angular_sep_deg,
+            ))
+        }
+        "dso" => {
+            let dso = store.dsos.get(req.index as usize)?;
+            let eq_j2000 = Equatorial {
+                ra_deg: dso.ra_deg,
+                dec_deg: dso.dec_deg,
+            };
+            let eq_app = vec3_to_equatorial(mat3_mul_vec(&mat, equatorial_to_vec3(eq_j2000)));
+            let mut hor = equatorial_to_horizontal(eq_app, req.lat_deg, last);
+            if req.refraction {
+                hor.alt_deg = apply_standard_refraction(hor.alt_deg);
+            }
+            Some(build_dso_picked_object(
+                dso,
+                eq_app,
+                hor,
+                req.angular_sep_deg,
+            ))
+        }
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub fn resolve_sky_object_by_index(
+    req: ResolveSkyObjectRequest,
+    store: State<'_, CatalogStore>,
+) -> Option<PickedObject> {
+    resolve_sky_object_by_index_impl(&req, &store)
+}
+
 #[tauri::command]
 pub fn pick_sky_object(
     req: PickSkyRequest,
@@ -1123,49 +1303,12 @@ pub fn pick_sky_object(
         let score = sep + 0.018 * mag.max(-1.5);
         if score < best_score {
             best_score = score;
-            let proper = store.stars.proper_name(star);
-            let bayer = store.stars.bayer(star);
-            let con = store.stars.constellation_code(star).unwrap_or("");
-            let guide_ja = if star.hip > 0 {
-                ja_by_hip.get(&star.hip).copied()
-            } else {
-                None
-            };
-            let title_en = if !proper.is_empty() {
-                proper.to_owned()
-            } else if !bayer.is_empty() {
-                format!("{bayer} {con}")
-            } else if star.hip > 0 {
-                format!("HIP {}", star.hip)
-            } else {
-                format!("Star #{}", star.id)
-            };
-            let title_ja = guide_ja.map(str::to_owned).unwrap_or_else(|| title_en.clone());
-            let dist_ly = f64::from(star.dist_pc) * 3.261_56;
-            let dist_text = if star.dist_pc > 0.0 && star.dist_pc < 99_000.0 {
-                format!("{dist_ly:.1} 光年")
-            } else {
-                "距離不明".into()
-            };
-            best_pick = Some(PickedObject {
-                kind: "star".into(),
-                id: if star.hip > 0 {
-                    format!("HIP {}", star.hip)
-                } else {
-                    format!("STAR {}", star.id)
-                },
-                name_ja: title_ja,
-                name_en: title_en,
-                constellation: (!con.is_empty()).then(|| con.to_owned()),
-                mag: Some(mag),
-                ra_deg: eq_app.ra_deg,
-                dec_deg: eq_app.dec_deg,
-                az_deg: hor.az_deg,
-                alt_deg: hor.alt_deg,
-                dist_text,
-                angular_sep_deg: sep,
-                extra_info: format!("色指数 B-V {:.2}", star.ci),
-            });
+            let guide_ja = (star.hip > 0)
+                .then(|| ja_by_hip.get(&star.hip).copied())
+                .flatten();
+            best_pick = Some(build_star_picked_object(
+                &store, star, guide_ja, eq_app, hor, sep,
+            ));
         }
     }
 
@@ -1192,37 +1335,10 @@ pub fn pick_sky_object(
         if !req.projection.show_below_horizon && hor.alt_deg < -0.5 {
             continue;
         }
-        let mag = dso.mag.map(f64::from);
         let score = sep + if dso.messier.is_some() { 0.02 } else { 0.08 };
         if score < best_score {
             best_score = score;
-            let m_label = dso
-                .messier
-                .map(|m| format!("M{m}"))
-                .unwrap_or_else(|| dso.id.clone());
-            let name_ja = dso
-                .name_ja
-                .clone()
-                .map(|j| format!("{m_label} {j}"))
-                .unwrap_or_else(|| m_label.clone());
-            best_pick = Some(PickedObject {
-                kind: "dso".into(),
-                id: m_label,
-                name_ja,
-                name_en: dso.name_en.clone(),
-                constellation: Some(dso.constellation.clone()),
-                mag,
-                ra_deg: eq_app.ra_deg,
-                dec_deg: eq_app.dec_deg,
-                az_deg: hor.az_deg,
-                alt_deg: hor.alt_deg,
-                dist_text: dso.obj_type.clone(),
-                angular_sep_deg: sep,
-                extra_info: dso
-                    .maj_ax_arcmin
-                    .map(|a| format!("視直径 {a:.1}'"))
-                    .unwrap_or_else(|| dso.obj_type.clone()),
-            });
+            best_pick = Some(build_dso_picked_object(dso, eq_app, hor, sep));
         }
     }
 
@@ -2400,5 +2516,77 @@ mod tests {
         );
         assert!(!nearby.is_empty());
         assert!(nearby.windows(2).all(|w| w[0].angular_sep_deg <= w[1].angular_sep_deg));
+    }
+
+    #[test]
+    fn binary_buffers_include_valid_u32_indices_and_dso_geometry() {
+        let store = test_store();
+
+        let star_bytes = build_sky_star_bytes(&store);
+        assert_eq!(star_bytes.len(), store.stars.stars.len() * 24);
+        let first_idx = u32::from_le_bytes(star_bytes[20..24].try_into().unwrap()) as usize;
+        let first_mag = f32::from_le_bytes(star_bytes[12..16].try_into().unwrap());
+        assert!((store.stars.stars[first_idx].mag - first_mag).abs() < 1e-6);
+
+        let dso_bytes = build_sky_dso_bytes(&store);
+        assert_eq!(dso_bytes.len(), store.dsos.len() * 40);
+        let dso_idx = u32::from_le_bytes(dso_bytes[36..40].try_into().unwrap()) as usize;
+        let ratio = f32::from_le_bytes(dso_bytes[20..24].try_into().unwrap());
+        assert!(dso_idx < store.dsos.len());
+        assert!(ratio >= 0.18 && ratio <= 1.0);
+    }
+
+    #[test]
+    fn resolve_sky_object_by_index_o1_works() {
+        let store = test_store();
+        let jd = ymd_hms_to_jd(2026, 1, 1, 13, 0, 0.0);
+
+        let star_bytes = build_sky_star_bytes(&store);
+        let brightest_idx = u32::from_le_bytes(star_bytes[20..24].try_into().unwrap());
+        let star_pick = resolve_sky_object_by_index_impl(
+            &ResolveSkyObjectRequest {
+                kind: "star".into(),
+                index: brightest_idx,
+                angular_sep_deg: 0.02,
+                jd_ut: jd,
+                lat_deg: 34.6431,
+                lon_deg: 134.9972,
+                refraction: true,
+            },
+            &store,
+        )
+        .expect("brightest star resolves");
+        assert_eq!(star_pick.kind, "star");
+
+        let dso_bytes = build_sky_dso_bytes(&store);
+        let first_dso_idx = u32::from_le_bytes(dso_bytes[36..40].try_into().unwrap());
+        let dso_pick = resolve_sky_object_by_index_impl(
+            &ResolveSkyObjectRequest {
+                kind: "dso".into(),
+                index: first_dso_idx,
+                angular_sep_deg: 0.05,
+                jd_ut: jd,
+                lat_deg: 34.6431,
+                lon_deg: 134.9972,
+                refraction: true,
+            },
+            &store,
+        )
+        .expect("first dso resolves");
+        assert_eq!(dso_pick.kind, "dso");
+
+        assert!(resolve_sky_object_by_index_impl(
+            &ResolveSkyObjectRequest {
+                kind: "star".into(),
+                index: u32::MAX,
+                angular_sep_deg: 0.0,
+                jd_ut: jd,
+                lat_deg: 34.6431,
+                lon_deg: 134.9972,
+                refraction: true,
+            },
+            &store,
+        )
+        .is_none());
     }
 }

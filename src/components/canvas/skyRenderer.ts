@@ -30,8 +30,10 @@ import {
 } from "@/lib/projection";
 import {
   computePanelCullCone,
+  DSO_STRIDE,
   getOrBuildDsoSpatialGrid,
   getOrBuildStarSpatialGrid,
+  STAR_STRIDE,
   type PanelCullCone,
   type SpatialSkyCell,
 } from "@/lib/spatialSkyIndex";
@@ -562,6 +564,8 @@ export interface SkyRenderArgs {
   printColorMode?: PrintColorMode;
   skipMeteors?: boolean;
   fastInteractive?: boolean;
+  renderPhase?: "all" | "background" | "foreground";
+  includeDsoMarkersInForeground?: boolean;
   onTextureLoaded?: () => void;
 }
 
@@ -2148,6 +2152,8 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     printColorMode = "normal",
     skipMeteors = false,
     fastInteractive = false,
+    renderPhase = "all",
+    includeDsoMarkersInForeground = false,
     onTextureLoaded,
   } = args;
 
@@ -2206,8 +2212,12 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
   const isProperMotion = frame.view_mode === "proper_motion";
 
   // Outer matte backdrop (for circular all-sky, hemisphere dome(s), and panorama side margins)
-  c.fillStyle = isInverted ? "#ffffff" : nightVision ? "#030000" : "#02050d";
-  c.fillRect(0, 0, width, height);
+  if (renderPhase === "foreground") {
+    c.clearRect(0, 0, width, height);
+  } else {
+    c.fillStyle = isInverted ? "#ffffff" : nightVision ? "#030000" : "#02050d";
+    c.fillRect(0, 0, width, height);
+  }
 
   const effFov = effectiveFovDeg(params.mode, params.fov_deg) / params.zoom;
   const pxPerDeg = Math.min(width, height) / Math.max(0.25, effFov);
@@ -2216,14 +2226,15 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     c.save();
     clipToPanel(c, pCtx, panel);
 
-    drawRealisticSkyBackground(c, pCtx, effectiveFrame, panel);
-
     const m20 = mJ2000ToEnu[6];
     const m21 = mJ2000ToEnu[7];
     const m22 = mJ2000ToEnu[8];
     const isChart = params.mode === "star_chart";
     const canCullHorizon = !params.show_below_horizon && !showOppositeGroundSky;
     const cullCone = computePanelCullCone(skyPCtx, panel, mJ2000ToEnu, mJ2000ToApp);
+
+    if (renderPhase !== "foreground") {
+      drawRealisticSkyBackground(c, pCtx, effectiveFrame, panel);
 
     // Seamless All-Sky Real-Sky Survey (HiPS / DSS2 / 2MASS)
     if (hipsConfig.enabled && !isOtherStar && !isInverted) {
@@ -2601,129 +2612,182 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
       }
       c.restore();
     }
+    }
 
-    // Stars (spherical spatial partitioning + magnitude culling + LUT colors)
-    if (starBuffer && starCount > 0) {
+    // Stars (Canvas 2D full star pass in "all" mode; only mag < 1.65 spikes in WebGL "foreground" mode)
+    if (renderPhase !== "background" && starBuffer && starCount > 0) {
       const vis = frame.sky_palette.star_visibility_factor;
       const effectiveLimit =
         vis < 0.25 ? Math.min(limitingMag, 2.2) : vis < 0.7 ? limitingMag - 1.5 : limitingMag;
-      const spriteImg = nightVision ? atlas.nightVision : atlas.normal;
-      const cellPx = atlas.cellSize;
       const grid = getOrBuildStarSpatialGrid(starBuffer);
       const data = grid.data;
-      let lastFillStyle = "";
 
-      for (const cell of grid.cells) {
-        if (!isSpatialCellVisible(cell, effectiveLimit, canCullHorizon, m20, m21, m22, cullCone)) {
-          continue;
+      const drawBrightStarSpikes = (
+        px: number,
+        py: number,
+        spriteSize: number,
+        mag: number,
+        ci: number,
+        alpha: number,
+      ) => {
+        const starRgb = bvToRgb(ci, nightVision);
+        const spikeScale = mag < 0 ? 1.15 : Math.max(0.45, (1.85 - mag) / 1.85);
+        const sLen = spriteSize * (0.72 + spikeScale * 0.58);
+        const spikeAlpha = Math.min(1, (0.35 + spikeScale * 0.42) * alpha);
+        const coreLen = sLen * 0.45;
+        c.strokeStyle = `rgba(${starRgb.r}, ${starRgb.g}, ${starRgb.b}, ${(spikeAlpha * 0.42).toFixed(2)})`;
+        c.lineWidth = mag < 0.2 ? 1.35 : 0.95;
+        c.beginPath();
+        c.moveTo(px - sLen, py);
+        c.lineTo(px + sLen, py);
+        c.moveTo(px, py - sLen);
+        c.lineTo(px, py + sLen);
+        c.stroke();
+
+        c.strokeStyle = nightVision
+          ? `rgba(255, 160, 160, ${(spikeAlpha * 0.82).toFixed(2)})`
+          : `rgba(255, 255, 255, ${(spikeAlpha * 0.85).toFixed(2)})`;
+        c.lineWidth = mag < 0.2 ? 1.05 : 0.75;
+        c.beginPath();
+        c.moveTo(px - coreLen, py);
+        c.lineTo(px + coreLen, py);
+        c.moveTo(px, py - coreLen);
+        c.lineTo(px, py + coreLen);
+        c.stroke();
+
+        if (mag < 0.5) {
+          const dLen = sLen * 0.48;
+          c.strokeStyle = `rgba(${starRgb.r}, ${starRgb.g}, ${starRgb.b}, ${(spikeAlpha * 0.36).toFixed(2)})`;
+          c.lineWidth = 0.7;
+          c.beginPath();
+          c.moveTo(px - dLen, py - dLen);
+          c.lineTo(px + dLen, py + dLen);
+          c.moveTo(px - dLen, py + dLen);
+          c.lineTo(px + dLen, py - dLen);
+          c.stroke();
         }
-        for (let idx = cell.start; idx < cell.end; idx++) {
-          const off = idx * 5;
-          const mag = data[off + 3];
-          if (mag > effectiveLimit) break;
+      };
 
-          if (
-            !projectJ2000UnitVec(
-              data[off],
-              data[off + 1],
-              data[off + 2],
-              mJ2000ToEnu,
-              mJ2000ToApp,
-              skyPCtx,
-              panel,
-              isChart,
-              refractionEnabled,
-              canCullHorizon,
-              scratch,
-            )
-          ) {
+      if (renderPhase === "foreground") {
+        if (!isInverted) {
+          const spikeCeiling = Math.min(effectiveLimit, 1.65);
+          for (const cell of grid.cells) {
+            if (!isSpatialCellVisible(cell, spikeCeiling, canCullHorizon, m20, m21, m22, cullCone)) {
+              continue;
+            }
+            for (let idx = cell.start; idx < cell.end; idx++) {
+              const off = idx * STAR_STRIDE;
+              const mag = data[off + 3];
+              if (mag >= 1.65 || mag > effectiveLimit) break;
+              if (
+                !projectJ2000UnitVec(
+                  data[off],
+                  data[off + 1],
+                  data[off + 2],
+                  mJ2000ToEnu,
+                  mJ2000ToApp,
+                  skyPCtx,
+                  panel,
+                  isChart,
+                  refractionEnabled,
+                  canCullHorizon,
+                  scratch,
+                )
+              ) {
+                continue;
+              }
+              const ci = data[off + 4];
+              const alpha = Math.min(
+                1,
+                Math.max(0.18, (1.15 - (mag + 1.5) / (limitingMag + 2.5)) * Math.max(0.25, vis)),
+              );
+              const spriteSize = Math.max(8, Math.min(30, (4.2 - mag) * 4.6));
+              drawBrightStarSpikes(scratch[0], scratch[1], spriteSize, mag, ci, alpha);
+            }
+          }
+        }
+      } else {
+        const spriteImg = nightVision ? atlas.nightVision : atlas.normal;
+        const cellPx = atlas.cellSize;
+        let lastFillStyle = "";
+
+        for (const cell of grid.cells) {
+          if (!isSpatialCellVisible(cell, effectiveLimit, canCullHorizon, m20, m21, m22, cullCone)) {
             continue;
           }
+          for (let idx = cell.start; idx < cell.end; idx++) {
+            const off = idx * STAR_STRIDE;
+            const mag = data[off + 3];
+            if (mag > effectiveLimit) break;
 
-          const px = scratch[0];
-          const py = scratch[1];
-          const ci = data[off + 4];
-          const alpha = Math.min(
-            1,
-            Math.max(0.18, (1.15 - (mag + 1.5) / (limitingMag + 2.5)) * Math.max(0.25, vis)),
-          );
-
-          if (isInverted) {
-            const r = Math.max(0.75, Math.min(4.8, 3.6 - mag * 0.48));
-            if (lastFillStyle !== "#020617") {
-              c.fillStyle = "#020617";
-              lastFillStyle = "#020617";
+            if (
+              !projectJ2000UnitVec(
+                data[off],
+                data[off + 1],
+                data[off + 2],
+                mJ2000ToEnu,
+                mJ2000ToApp,
+                skyPCtx,
+                panel,
+                isChart,
+                refractionEnabled,
+                canCullHorizon,
+                scratch,
+              )
+            ) {
+              continue;
             }
-            c.beginPath();
-            c.arc(px, py, r, 0, Math.PI * 2);
-            c.fill();
-          } else if (mag <= 2.4) {
-            const spriteSize = Math.max(8, Math.min(30, (4.2 - mag) * 4.6));
-            const bucket = bvToSpriteBucket(ci);
-            c.globalAlpha = alpha;
-            c.drawImage(
-              spriteImg,
-              bucket * cellPx,
-              0,
-              cellPx,
-              cellPx,
-              px - spriteSize * 0.5,
-              py - spriteSize * 0.5,
-              spriteSize,
-              spriteSize,
+
+            const px = scratch[0];
+            const py = scratch[1];
+            const ci = data[off + 4];
+            const alpha = Math.min(
+              1,
+              Math.max(0.18, (1.15 - (mag + 1.5) / (limitingMag + 2.5)) * Math.max(0.25, vis)),
             );
-            if (mag < 1.65) {
-              const starRgb = bvToRgb(ci, nightVision);
-              const spikeScale = mag < 0 ? 1.15 : Math.max(0.45, (1.85 - mag) / 1.85);
-              const sLen = spriteSize * (0.72 + spikeScale * 0.58);
-              const spikeAlpha = Math.min(1, (0.35 + spikeScale * 0.42) * alpha);
-              const coreLen = sLen * 0.45;
-              c.strokeStyle = `rgba(${starRgb.r}, ${starRgb.g}, ${starRgb.b}, ${(spikeAlpha * 0.42).toFixed(2)})`;
-              c.lineWidth = mag < 0.2 ? 1.35 : 0.95;
-              c.beginPath();
-              c.moveTo(px - sLen, py);
-              c.lineTo(px + sLen, py);
-              c.moveTo(px, py - sLen);
-              c.lineTo(px, py + sLen);
-              c.stroke();
 
-              c.strokeStyle = nightVision
-                ? `rgba(255, 160, 160, ${(spikeAlpha * 0.82).toFixed(2)})`
-                : `rgba(255, 255, 255, ${(spikeAlpha * 0.85).toFixed(2)})`;
-              c.lineWidth = mag < 0.2 ? 1.05 : 0.75;
-              c.beginPath();
-              c.moveTo(px - coreLen, py);
-              c.lineTo(px + coreLen, py);
-              c.moveTo(px, py - coreLen);
-              c.lineTo(px, py + coreLen);
-              c.stroke();
-
-              if (mag < 0.5) {
-                const dLen = sLen * 0.48;
-                c.strokeStyle = `rgba(${starRgb.r}, ${starRgb.g}, ${starRgb.b}, ${(spikeAlpha * 0.36).toFixed(2)})`;
-                c.lineWidth = 0.7;
-                c.beginPath();
-                c.moveTo(px - dLen, py - dLen);
-                c.lineTo(px + dLen, py + dLen);
-                c.moveTo(px - dLen, py + dLen);
-                c.lineTo(px + dLen, py - dLen);
-                c.stroke();
+            if (isInverted) {
+              const r = Math.max(0.75, Math.min(4.8, 3.6 - mag * 0.48));
+              if (lastFillStyle !== "#020617") {
+                c.fillStyle = "#020617";
+                lastFillStyle = "#020617";
               }
-            }
-            c.globalAlpha = 1;
-          } else {
-            const r = Math.max(0.65, Math.min(2.6, 2.75 - mag * 0.28));
-            const style = getFaintStarCss(ci, alpha, nightVision);
-            if (style !== lastFillStyle) {
-              c.fillStyle = style;
-              lastFillStyle = style;
-            }
-            if (r <= (fastInteractive ? 1.75 : 1.2)) {
-              c.fillRect(px - r * 0.5, py - r * 0.5, r * 1.35, r * 1.35);
-            } else {
               c.beginPath();
               c.arc(px, py, r, 0, Math.PI * 2);
               c.fill();
+            } else if (mag <= 2.4) {
+              const spriteSize = Math.max(8, Math.min(30, (4.2 - mag) * 4.6));
+              const bucket = bvToSpriteBucket(ci);
+              c.globalAlpha = alpha;
+              c.drawImage(
+                spriteImg,
+                bucket * cellPx,
+                0,
+                cellPx,
+                cellPx,
+                px - spriteSize * 0.5,
+                py - spriteSize * 0.5,
+                spriteSize,
+                spriteSize,
+              );
+              if (mag < 1.65) {
+                drawBrightStarSpikes(px, py, spriteSize, mag, ci, alpha);
+              }
+              c.globalAlpha = 1;
+            } else {
+              const r = Math.max(0.65, Math.min(2.6, 2.75 - mag * 0.28));
+              const style = getFaintStarCss(ci, alpha, nightVision);
+              if (style !== lastFillStyle) {
+                c.fillStyle = style;
+                lastFillStyle = style;
+              }
+              if (r <= (fastInteractive ? 1.75 : 1.2)) {
+                c.fillRect(px - r * 0.5, py - r * 0.5, r * 1.35, r * 1.35);
+              } else {
+                c.beginPath();
+                c.arc(px, py, r, 0, Math.PI * 2);
+                c.fill();
+              }
             }
           }
         }
@@ -2731,7 +2795,12 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     }
 
     // DSO markers (spherical spatial culling over binary 13k+ DSOs, or staticAssets fallback)
-    if (layers.dsoMarkers && !isOtherStar && effectivePalette.star_visibility_factor > 0.25) {
+    if (
+      (renderPhase === "all" || (renderPhase === "foreground" && includeDsoMarkersInForeground)) &&
+      layers.dsoMarkers &&
+      !isOtherStar &&
+      effectivePalette.star_visibility_factor > 0.25
+    ) {
       c.save();
       if (layers.zoomTextures && effFov < 30) {
         c.globalAlpha = 0.42;
@@ -2746,9 +2815,13 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
             continue;
           }
           for (let idx = cell.start; idx < cell.end; idx++) {
-            const off = idx * 7;
+            const off = idx * DSO_STRIDE;
             const mag = dsoData[off + 3];
-            const messierNum = dsoData[off + 6];
+            const majArcmin = dsoData[off + 4];
+            const axisRatio = dsoData[off + 5];
+            const posAngDeg = dsoData[off + 6];
+            const kindCode = dsoData[off + 7];
+            const messierNum = dsoData[off + 8];
             if (messierNum === 0 && mag > dsoMagMax) break;
             if (
               !projectJ2000UnitVec(
@@ -2769,10 +2842,10 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
             }
             drawDsoKindSymbol(
               c,
-              dsoData[off + 5],
-              dsoData[off + 4],
-              0.55,
-              30,
+              kindCode,
+              majArcmin,
+              axisRatio,
+              posAngDeg,
               scratch[0],
               scratch[1],
               pxPerDeg,
@@ -2791,6 +2864,11 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
         }
       }
       c.restore();
+    }
+
+    if (renderPhase === "background") {
+      c.restore();
+      continue;
     }
 
     // Object Trails Overlay (planetary retrograde / diurnal / seasonal sunrise-sunset analemma)
@@ -3406,80 +3484,82 @@ export function renderSkyCanvas(args: SkyRenderArgs): void {
     c.restore();
   }
 
-  // Dome bezel / circular framing & cardinals outside clip for AllSky / Hemispheres
-  c.save();
-  const bezelCol = nightVision ? "rgba(185, 28, 28, 0.55)" : "rgba(148, 163, 184, 0.45)";
-  const dirCol = nightVision ? "rgba(239, 68, 68, 0.92)" : "rgba(251, 191, 36, 0.92)";
-  c.strokeStyle = bezelCol;
-  c.lineWidth = 1.5;
+  // Dome bezel / circular framing, cardinals & FOV overlays belong on foreground/all passes
+  if (renderPhase !== "background") {
+    c.save();
+    const bezelCol = nightVision ? "rgba(185, 28, 28, 0.55)" : "rgba(148, 163, 184, 0.45)";
+    const dirCol = nightVision ? "rgba(239, 68, 68, 0.92)" : "rgba(251, 191, 36, 0.92)";
+    c.strokeStyle = bezelCol;
+    c.lineWidth = 1.5;
 
-  if (params.mode === "all_sky") {
-    c.beginPath();
-    c.arc(pCtx.cx, pCtx.cy, pCtx.allSkyRadius, 0, Math.PI * 2);
-    c.stroke();
-    if (layers.horizonAndCardinals) {
-      const dirs: [number, string][] = [
-        [0, "北 N"], [45, "北東"], [90, "東 E"], [135, "南東"],
-        [180, "南 S"], [225, "南西"], [270, "西 W"], [315, "北西"],
-      ];
-      c.font = '600 12px "Noto Sans JP", system-ui, sans-serif';
-      c.fillStyle = dirCol;
-      c.textAlign = "center";
-      c.textBaseline = "middle";
-      for (const [az, label] of dirs) {
-        const dAz = (az - params.center_az_deg) * DEG2RAD;
-        const lx = pCtx.cx + (pCtx.allSkyRadius + 16) * Math.sin(dAz);
-        const ly = pCtx.cy + (pCtx.allSkyRadius + 16) * Math.cos(dAz);
-        c.fillText(label, lx, ly);
-      }
-    }
-  } else if (params.mode === "hemisphere_single" || params.mode === "hemisphere_dual") {
-    const drawDomeBezel = (hcx: number, hcy: number, hr: number, azFace: number) => {
+    if (params.mode === "all_sky") {
       c.beginPath();
-      if (params.show_below_horizon) {
-        c.arc(hcx, hcy, hr, 0, Math.PI * 2);
-      } else {
-        c.arc(hcx, hcy, hr, Math.PI, 0, false);
-        c.closePath();
-      }
+      c.arc(pCtx.cx, pCtx.cy, pCtx.allSkyRadius, 0, Math.PI * 2);
       c.stroke();
       if (layers.horizonAndCardinals) {
-        c.font = '600 11px "Noto Sans JP", system-ui, sans-serif';
+        const dirs: [number, string][] = [
+          [0, "北 N"], [45, "北東"], [90, "東 E"], [135, "南東"],
+          [180, "南 S"], [225, "南西"], [270, "西 W"], [315, "北西"],
+        ];
+        c.font = '600 12px "Noto Sans JP", system-ui, sans-serif';
         c.fillStyle = dirCol;
         c.textAlign = "center";
-        c.textBaseline = "top";
-        c.fillText(`正面 ${azName(azFace)} (${Math.round(azFace)}°)`, hcx, hcy + 10);
-        c.fillText(azName(wrapDeg360(azFace - 90)), hcx - hr, hcy + 10);
-        c.fillText(azName(wrapDeg360(azFace + 90)), hcx + hr, hcy + 10);
+        c.textBaseline = "middle";
+        for (const [az, label] of dirs) {
+          const dAz = (az - params.center_az_deg) * DEG2RAD;
+          const lx = pCtx.cx + (pCtx.allSkyRadius + 16) * Math.sin(dAz);
+          const ly = pCtx.cy + (pCtx.allSkyRadius + 16) * Math.cos(dAz);
+          c.fillText(label, lx, ly);
+        }
       }
-    };
+    } else if (params.mode === "hemisphere_single" || params.mode === "hemisphere_dual") {
+      const drawDomeBezel = (hcx: number, hcy: number, hr: number, azFace: number) => {
+        c.beginPath();
+        if (params.show_below_horizon) {
+          c.arc(hcx, hcy, hr, 0, Math.PI * 2);
+        } else {
+          c.arc(hcx, hcy, hr, Math.PI, 0, false);
+          c.closePath();
+        }
+        c.stroke();
+        if (layers.horizonAndCardinals) {
+          c.font = '600 11px "Noto Sans JP", system-ui, sans-serif';
+          c.fillStyle = dirCol;
+          c.textAlign = "center";
+          c.textBaseline = "top";
+          c.fillText(`正面 ${azName(azFace)} (${Math.round(azFace)}°)`, hcx, hcy + 10);
+          c.fillText(azName(wrapDeg360(azFace - 90)), hcx - hr, hcy + 10);
+          c.fillText(azName(wrapDeg360(azFace + 90)), hcx + hr, hcy + 10);
+        }
+      };
 
-    drawDomeBezel(pCtx.hemCx0, pCtx.hemCy0, pCtx.hemRadius0, params.center_az_deg);
-    if (params.mode === "hemisphere_dual") {
-      drawDomeBezel(pCtx.hemCx1, pCtx.hemCy1, pCtx.hemRadius1, wrapDeg360(params.center_az_deg + 180));
+      drawDomeBezel(pCtx.hemCx0, pCtx.hemCy0, pCtx.hemRadius0, params.center_az_deg);
+      if (params.mode === "hemisphere_dual") {
+        drawDomeBezel(pCtx.hemCx1, pCtx.hemCy1, pCtx.hemRadius1, wrapDeg360(params.center_az_deg + 180));
+      }
     }
-  }
-  c.restore();
+    c.restore();
 
-  // FOV Frames Overlay (Camera Sensor + FL, Telescope + Eyepiece, Binoculars, Telrad)
-  if (fovPresets.length > 0) {
-    drawFovOverlays(c, fovPresets, pxPerDeg, width, height, nightVision, isInverted);
-  }
+    // FOV Frames Overlay (Camera Sensor + FL, Telescope + Eyepiece, Binoculars, Telrad)
+    if (fovPresets.length > 0) {
+      drawFovOverlays(c, fovPresets, pxPerDeg, width, height, nightVision, isInverted);
+    }
 
-  // Optional Grayscale conversion for ink-saving prints
-  if (printColorMode === "grayscale") {
-    try {
-      const img = c.getImageData(0, 0, Math.round(width), Math.round(height));
-      const d = img.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
-        d[i] = lum;
-        d[i + 1] = lum;
-        d[i + 2] = lum;
+    // Optional Grayscale conversion for ink-saving prints
+    if (printColorMode === "grayscale") {
+      try {
+        const img = c.getImageData(0, 0, Math.round(width), Math.round(height));
+        const d = img.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+          d[i] = lum;
+          d[i + 1] = lum;
+          d[i + 2] = lum;
+        }
+        c.putImageData(img, 0, 0);
+      } catch {
+        // Ignore if canvas dimensions exceed readback limits
       }
-      c.putImageData(img, 0, 0);
-    } catch {
-      // Ignore if canvas dimensions exceed readback limits
     }
   }
 }

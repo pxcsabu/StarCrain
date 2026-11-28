@@ -1,5 +1,10 @@
 import type { CompiledProjectionContext } from "@/lib/projection";
 
+/** Packed floats per star in binary IPC & spatial grid (`[x, y, z, mag, ci, idx_u32]`). */
+export const STAR_STRIDE = 6;
+/** Packed floats per DSO in binary IPC & spatial grid (`[x, y, z, mag, maj, axisRatio, pa, kind, messier, idx_u32]`). */
+export const DSO_STRIDE = 10;
+
 export interface SpatialSkyCell {
   start: number; // start entry index (multiply by stride for Float32Array offset)
   end: number; // exclusive entry index
@@ -15,6 +20,7 @@ export interface SpatialSkyCell {
 export interface SpatialSkyGrid {
   stride: number;
   data: Float32Array;
+  ids: Uint32Array;
   cells: SpatialSkyCell[];
 }
 
@@ -56,6 +62,11 @@ function buildSpatialGrid(
   messierAware: boolean,
 ): SpatialSkyGrid {
   const totalCount = Math.floor(source.length / stride);
+  const srcIds = new Uint32Array(
+    source.buffer,
+    source.byteOffset,
+    Math.floor(source.byteLength / 4),
+  );
   const counts = new Int32Array(CELL_COUNT);
   const cellIds = new Uint16Array(totalCount);
 
@@ -66,7 +77,6 @@ function buildSpatialGrid(
     counts[cid]++;
   }
 
-  // Build bucket entry lists so we can sort entries within each spatial cell
   const buckets: number[][] = new Array(CELL_COUNT);
   for (let c = 0; c < CELL_COUNT; c++) {
     buckets[c] = counts[c] > 0 ? [] : [];
@@ -76,6 +86,8 @@ function buildSpatialGrid(
   }
 
   const packed = new Float32Array(totalCount * stride);
+  const ids = new Uint32Array(totalCount);
+  const messierSlot = 8; // [x, y, z, mag, maj, axisRatio, pa, kind, messier, idx]
   const cells: SpatialSkyCell[] = [];
   let cursor = 0;
 
@@ -87,8 +99,8 @@ function buildSpatialGrid(
       list.sort((a, b) => {
         const oa = a * stride;
         const ob = b * stride;
-        const ma = source[oa + 6] > 0 ? 0 : 1;
-        const mb = source[ob + 6] > 0 ? 0 : 1;
+        const ma = source[oa + messierSlot] > 0 ? 0 : 1;
+        const mb = source[ob + messierSlot] > 0 ? 0 : 1;
         if (ma !== mb) return ma - mb;
         return source[oa + 3] - source[ob + 3];
       });
@@ -106,6 +118,7 @@ function buildSpatialGrid(
       for (let f = 0; f < stride; f++) {
         packed[dstOff + f] = source[srcOff + f];
       }
+      ids[cursor] = srcIds[srcOff + stride - 1];
       sx += source[srcOff];
       sy += source[srcOff + 1];
       sz += source[srcOff + 2];
@@ -138,7 +151,7 @@ function buildSpatialGrid(
     const radiusRad = Math.min(Math.PI, Math.acos(Math.max(-1, Math.min(1, minDot))) + 0.004);
     const firstOff = start * stride;
     const minMag =
-      messierAware && packed[firstOff + 6] > 0 ? -99 : packed[firstOff + 3];
+      messierAware && packed[firstOff + messierSlot] > 0 ? -99 : packed[firstOff + 3];
 
     cells.push({
       start,
@@ -153,24 +166,24 @@ function buildSpatialGrid(
     });
   }
 
-  return { stride, data: packed, cells };
+  return { stride, data: packed, ids, cells };
 }
 
-/** Cacheable 288-cell spherical spatial index over packed star Float32Array (stride 5). */
+/** Cacheable 288-cell spherical spatial index over packed star Float32Array (stride 6). */
 export function getOrBuildStarSpatialGrid(starBuffer: Float32Array): SpatialSkyGrid {
   let cached = starGridCache.get(starBuffer);
   if (!cached) {
-    cached = buildSpatialGrid(starBuffer, 5, false);
+    cached = buildSpatialGrid(starBuffer, STAR_STRIDE, false);
     starGridCache.set(starBuffer, cached);
   }
   return cached;
 }
 
-/** Cacheable 288-cell spherical spatial index over packed DSO Float32Array (stride 7). */
+/** Cacheable 288-cell spherical spatial index over packed DSO Float32Array (stride 10). */
 export function getOrBuildDsoSpatialGrid(dsoBuffer: Float32Array): SpatialSkyGrid {
   let cached = dsoGridCache.get(dsoBuffer);
   if (!cached) {
-    cached = buildSpatialGrid(dsoBuffer, 7, true);
+    cached = buildSpatialGrid(dsoBuffer, DSO_STRIDE, true);
     dsoGridCache.set(dsoBuffer, cached);
   }
   return cached;
@@ -249,4 +262,27 @@ export function computePanelCullCone(
     cosHalfCone: Math.cos(halfConeRad),
     sinHalfCone: Math.sin(halfConeRad),
   };
+}
+
+/** O(1) cell visibility test combining magnitude ceiling, horizon culling, and view cone overlap. */
+export function isSpatialCellVisible(
+  cell: SpatialSkyCell,
+  magLimit: number,
+  canCullHorizon: boolean,
+  m20: number,
+  m21: number,
+  m22: number,
+  cone: PanelCullCone,
+): boolean {
+  if (cell.minMag > magLimit) return false;
+  if (canCullHorizon) {
+    const czEnu = cell.cx * m20 + cell.cy * m21 + cell.cz * m22;
+    if (czEnu < -cell.sinRadius - 0.06) return false;
+  }
+  if (cone.useCone) {
+    const dot = cell.cx * cone.fxJ + cell.cy * cone.fyJ + cell.cz * cone.fzJ;
+    const minDot = cone.cosHalfCone * cell.cosRadius - cone.sinHalfCone * cell.sinRadius;
+    if (dot < minDot) return false;
+  }
+  return true;
 }

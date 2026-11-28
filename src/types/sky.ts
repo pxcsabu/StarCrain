@@ -1613,6 +1613,9 @@ export type PrintColorMode = "normal" | "inverted" | "grayscale";
 export type UnitSystem = "metric" | "imperial";
 export type AngleFormat = "dms" | "deg";
 
+export type RenderEnginePreference = "auto" | "webgl" | "canvas2d";
+export type ActiveRenderEngine = "webgl2" | "webgl1" | "canvas2d";
+
 export interface StarCraneProfileV1 {
   version: 1;
   exportedAt: string;
@@ -1636,6 +1639,7 @@ export interface StarCraneProfileV1 {
   colorPreset: ColorPresetId | "custom";
   customColors: CustomColorPalette;
   fovPresets: FovPreset[];
+  renderEnginePreference?: RenderEnginePreference;
 }
 
 export type LandscapePresetId = "veil" | "mountain" | "coast" | "observatory" | "desert" | "custom";

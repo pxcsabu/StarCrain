@@ -265,6 +265,7 @@ pub fn planet_surface_to_horizontal(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReprojectedStar {
+    pub star_idx: u32,
     pub hip: u32,
     pub is_sun: bool,
     pub name: String,
@@ -297,7 +298,8 @@ pub fn reproject_stars_from_star(
     let mut result: Vec<ReprojectedStar> = catalog
         .stars
         .par_iter()
-        .filter_map(|star| {
+        .enumerate()
+        .filter_map(|(idx, star)| {
             if star.hip == origin_hip {
                 return None;
             }
@@ -337,6 +339,7 @@ pub fn reproject_stars_from_star(
             };
 
             Some(ReprojectedStar {
+                star_idx: idx as u32,
                 hip: star.hip,
                 is_sun: false,
                 name,
@@ -354,6 +357,7 @@ pub fn reproject_stars_from_star(
     let sun_mag = (4.83 + 5.0 * (sun_dist_pc.log10() - 1.0)) as f32;
     if sun_mag <= max_mag {
         result.push(ReprojectedStar {
+            star_idx: u32::MAX,
             hip: 0,
             is_sun: true,
             name: "Sun (太陽)".to_string(),

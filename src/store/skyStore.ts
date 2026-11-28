@@ -13,10 +13,13 @@ import {
   j2000ToHorWithMatrix,
   wrapDeg360,
 } from "@/lib/projection";
+import { pickSkyObjectLocal } from "@/lib/skyPicking";
+import { DSO_STRIDE, STAR_STRIDE } from "@/lib/spatialSkyIndex";
 import { useClockStore, type ClockThemeId, type HourlyChimeMode } from "@/store/clockStore";
 import { type ThemeMode, useThemeStore } from "@/store/themeStore";
 import {
   type ActivePanelId,
+  type ActiveRenderEngine,
   type AltitudeTargetItem,
   type AngleFormat,
   COLOR_PRESETS,
@@ -42,6 +45,7 @@ import {
   PROJECTION_META,
   type ProjectionMode,
   type ProjectionParams,
+  type RenderEnginePreference,
   type SatellitePass,
   type SatelliteSkyPos,
   type SimulationLockMode,
@@ -84,8 +88,30 @@ const METEOR_ANIM_STORAGE_KEY = "starcrane:meteors_on:v1";
 const HIPS_STORAGE_KEY = "starcrane-hips-v1";
 const DISPLAY_PREFS_STORAGE_KEY = "starcrane-display-prefs-v1";
 const LAST_LOCATION_STORAGE_KEY = "starcrane-last-location-v1";
+const RENDER_ENGINE_STORAGE_KEY = "starcrane-render-engine-v1";
+
+function loadRenderEnginePreference(): RenderEnginePreference {
+  if (typeof window === "undefined") return "auto";
+  try {
+    const raw = window.localStorage.getItem(RENDER_ENGINE_STORAGE_KEY);
+    if (raw === "auto" || raw === "webgl" || raw === "canvas2d") return raw;
+  } catch {
+    // Ignore storage read errors
+  }
+  return "auto";
+}
+
+function persistRenderEnginePreference(pref: RenderEnginePreference): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(RENDER_ENGINE_STORAGE_KEY, pref);
+  } catch {
+    // Ignore storage write errors
+  }
+}
 
 let suppressDisplayPersist = false;
+let limitingMagRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 function loadHipsConfig(): HipsSurveyConfig {
   if (typeof window === "undefined") return { ...DEFAULT_HIPS_CONFIG };
@@ -732,6 +758,10 @@ export interface SkyState {
   liveWeather: NightWeatherForecast | null;
   showWeatherCloudsOverlay: boolean;
   liveSpaceWeather: SpaceWeatherSnapshot | null;
+  renderEnginePreference: RenderEnginePreference;
+  activeRenderEngine: ActiveRenderEngine;
+  renderEngineFallbackReason: string | null;
+  renderEngineGpuInfo: string | null;
 
   // Simulation & Timeline
   simPlaying: boolean;
@@ -849,6 +879,12 @@ export interface SkyState {
   setStartupDemo: (on: boolean) => void;
   setUnitSystem: (u: UnitSystem) => void;
   setAngleFormat: (f: AngleFormat) => void;
+  setRenderEnginePreference: (pref: RenderEnginePreference) => void;
+  reportActiveRenderEngine: (
+    engine: ActiveRenderEngine,
+    reason?: string | null,
+    gpuInfo?: string | null,
+  ) => void;
   exportProfileJson: () => string;
   importProfileJson: (raw: string) => { ok: boolean; message: string };
   resetAllSettings: () => void;
@@ -945,6 +981,10 @@ export const useSkyStore = create<SkyState>((set, get) => ({
   liveWeather: null,
   showWeatherCloudsOverlay: loadWeatherCloudsPref(),
   liveSpaceWeather: null,
+  renderEnginePreference: loadRenderEnginePreference(),
+  activeRenderEngine: "canvas2d",
+  renderEngineFallbackReason: null,
+  renderEngineGpuInfo: null,
 
   simPlaying: false,
   simDirection: 1,
@@ -1007,9 +1047,9 @@ export const useSkyStore = create<SkyState>((set, get) => ({
           staticAssets: assets,
           baseStarBuffer: starBuffer,
           starBuffer,
-          starCount: Math.floor(starBuffer.length / 5),
+          starCount: Math.floor(starBuffer.length / STAR_STRIDE),
           dsoBuffer,
-          dsoCount: Math.floor(dsoBuffer.length / 7),
+          dsoCount: Math.floor(dsoBuffer.length / DSO_STRIDE),
           locationsList: mergedLocs,
           location: resolvedLoc,
           initialized: true,
@@ -1054,7 +1094,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       if (s.baseStarBuffer && s.starBuffer !== s.baseStarBuffer) {
         set({
           starBuffer: s.baseStarBuffer,
-          starCount: Math.floor(s.baseStarBuffer.length / 5),
+          starCount: Math.floor(s.baseStarBuffer.length / STAR_STRIDE),
         });
       }
       return;
@@ -1069,7 +1109,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         });
         if (seq !== bufferRequestSeq) return;
         const buf = toFloat32Buffer(raw);
-        set({ starBuffer: buf, starCount: Math.floor(buf.length / 5) });
+        set({ starBuffer: buf, starCount: Math.floor(buf.length / STAR_STRIDE) });
       } else if (s.viewMode === "other_star") {
         const raw = await invoke<ArrayBuffer>("get_reprojected_star_buffer", {
           originHip: s.originStarHip,
@@ -1077,7 +1117,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         });
         if (seq !== bufferRequestSeq) return;
         const buf = toFloat32Buffer(raw);
-        set({ starBuffer: buf, starCount: Math.floor(buf.length / 5) });
+        set({ starBuffer: buf, starCount: Math.floor(buf.length / STAR_STRIDE) });
       }
     } catch (err) {
       if (seq === bufferRequestSeq) {
@@ -1577,7 +1617,13 @@ export const useSkyStore = create<SkyState>((set, get) => ({
 
   setLimitingMag: (limitingMag) => {
     set({ limitingMag });
-    void get().refreshFrame();
+    if (limitingMagRefreshTimer !== null) {
+      clearTimeout(limitingMagRefreshTimer);
+    }
+    limitingMagRefreshTimer = setTimeout(() => {
+      limitingMagRefreshTimer = null;
+      void get().refreshFrame();
+    }, 350);
   },
 
   setSkyRealismLevel: (skyRealismLevel) => {
@@ -1629,10 +1675,55 @@ export const useSkyStore = create<SkyState>((set, get) => ({
 
   pickAtScreen: async (x, y, width, height) => {
     const s = get();
-    if (!isTauri()) return;
+    if (!isTauri() && !s.skyFrame) return;
     set({ picking: true });
     try {
       const proj = s.buildProjectionParams(width, height);
+      if (s.skyFrame) {
+        const local = pickSkyObjectLocal({
+          x,
+          y,
+          params: proj,
+          frame: s.skyFrame,
+          location: s.location,
+          starBuffer: s.starBuffer,
+          dsoBuffer: s.dsoBuffer,
+          limitingMag: s.limitingMag,
+          refractionEnabled: s.refractionEnabled,
+        });
+        if (!local) {
+          set({ selectedObject: null, selectedObjectDetails: null, picking: false });
+          return;
+        }
+        if (local.source === "body") {
+          set({ selectedObject: local.picked, selectedObjectDetails: null, picking: false });
+          if (isTauri()) {
+            void get().fetchSelectedDetails();
+          }
+          return;
+        }
+        if (!isTauri()) {
+          set({ selectedObject: null, selectedObjectDetails: null, picking: false });
+          return;
+        }
+        const picked = await invoke<PickedObject | null>("resolve_sky_object_by_index", {
+          req: {
+            kind: local.kind,
+            index: local.index,
+            angular_sep_deg: local.angularSepDeg,
+            jd_ut: s.jdUt,
+            lat_deg: s.location.lat_deg,
+            lon_deg: s.location.lon_deg,
+            refraction: s.refractionEnabled,
+          },
+        });
+        set({ selectedObject: picked, selectedObjectDetails: null, picking: false });
+        if (picked) {
+          void get().fetchSelectedDetails();
+        }
+        return;
+      }
+
       const effFov = effectiveFovDeg(s.projectionMode, s.fovDeg) / s.zoom;
       const searchRadiusDeg = Math.min(3.5, Math.max(0.35, effFov / 34));
       const picked = await invoke<PickedObject | null>("pick_sky_object", {
@@ -1967,6 +2058,22 @@ export const useSkyStore = create<SkyState>((set, get) => ({
     set({ angleFormat });
   },
 
+  setRenderEnginePreference: (renderEnginePreference) => {
+    persistRenderEnginePreference(renderEnginePreference);
+    set({
+      renderEnginePreference,
+      renderEngineFallbackReason:
+        renderEnginePreference === "canvas2d" ? null : get().renderEngineFallbackReason,
+    });
+  },
+
+  reportActiveRenderEngine: (activeRenderEngine, reason = null, gpuInfo = null) =>
+    set({
+      activeRenderEngine,
+      renderEngineFallbackReason: reason ?? null,
+      renderEngineGpuInfo: gpuInfo ?? null,
+    }),
+
   exportProfileJson: () => {
     const s = get();
     const clk = useClockStore.getState();
@@ -1995,6 +2102,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       colorPreset: s.colorPreset,
       customColors: s.customColors,
       fovPresets: s.fovPresets,
+      renderEnginePreference: s.renderEnginePreference,
     };
     return JSON.stringify(profile, null, 2);
   },
@@ -2109,6 +2217,12 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         Array.isArray(parsed.fovPresets) && parsed.fovPresets.length > 0
           ? parsed.fovPresets
           : get().fovPresets;
+      const nextRenderEnginePref: RenderEnginePreference =
+        parsed.renderEnginePreference === "webgl" ||
+        parsed.renderEnginePreference === "canvas2d" ||
+        parsed.renderEnginePreference === "auto"
+          ? parsed.renderEnginePreference
+          : get().renderEnginePreference;
 
       if (typeof window !== "undefined") {
         window.localStorage.setItem(STARTUP_OBS_STORAGE_KEY, nextShowObs ? "1" : "0");
@@ -2116,6 +2230,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         window.localStorage.setItem(OFFLINE_STORAGE_KEY, nextOffline ? "1" : "0");
         persistUnitPrefs(nextUnit, nextAngle);
         persistFovPresets(nextFovPresets);
+        persistRenderEnginePreference(nextRenderEnginePref);
         window.localStorage.setItem(
           COLORS_STORAGE_KEY,
           JSON.stringify({ preset: nextPreset, colors: nextColors }),
@@ -2139,6 +2254,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         colorPreset: nextPreset,
         customColors: nextColors,
         fovPresets: nextFovPresets,
+        renderEnginePreference: nextRenderEnginePref,
       });
       void get().refreshFrame(validTheme === "night-vision");
       return { ok: true, message: "設定プロファイルを復元しました。" };
@@ -2166,6 +2282,7 @@ export const useSkyStore = create<SkyState>((set, get) => ({
       window.localStorage.removeItem(LANDSCAPE_STORAGE_KEY);
       window.localStorage.removeItem(WEATHER_CLOUDS_STORAGE_KEY);
       window.localStorage.removeItem(METEOR_ANIM_STORAGE_KEY);
+      window.localStorage.removeItem(RENDER_ENGINE_STORAGE_KEY);
     }
     useThemeStore.getState().setTheme("dark");
     const clk = useClockStore.getState();
@@ -2191,6 +2308,8 @@ export const useSkyStore = create<SkyState>((set, get) => ({
         showWeatherCloudsOverlay: false,
         meteorAnimationEnabled: true,
         autoRunRealtime: false,
+        renderEnginePreference: "auto",
+        renderEngineFallbackReason: null,
       });
     } finally {
       suppressDisplayPersist = false;

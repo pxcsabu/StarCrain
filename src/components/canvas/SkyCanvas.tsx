@@ -7,6 +7,7 @@ import {
   type StarSpriteAtlas,
   stepMeteorParticles,
 } from "@/components/canvas/skyRenderer";
+import { WebglSkyRenderer } from "@/components/canvas/webglSkyRenderer";
 import { enuToAzAlt, startSkyOrientationSensor } from "@/lib/deviceSensors";
 import { onHipsTileLoaded } from "@/lib/hipsSurvey";
 import { initCustomPanoramaFromStorage } from "@/lib/panoramaLandscape";
@@ -195,8 +196,13 @@ function evaluateSimInterp(
 
 export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const webglRendererRef = useRef<WebglSkyRenderer | null>(null);
+  const webglDisabledRef = useRef(false);
+  const webglLostTimerRef = useRef<number | null>(null);
   const atlasRef = useRef<StarSpriteAtlas | null>(null);
   const skyDirtyRef = useRef(true);
   const needHqRefreshRef = useRef(true);
@@ -503,6 +509,20 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
         needHqRefreshRef.current = true;
       }
 
+      if (next.renderEnginePreference !== prev.renderEnginePreference) {
+        if (next.renderEnginePreference === "canvas2d") {
+          webglRendererRef.current?.dispose();
+          webglRendererRef.current = null;
+          webglDisabledRef.current = false;
+          useSkyStore.getState().reportActiveRenderEngine("canvas2d", null, null);
+        } else {
+          webglDisabledRef.current = false;
+          useSkyStore.setState({ renderEngineFallbackReason: null });
+        }
+        skyDirtyRef.current = true;
+        needHqRefreshRef.current = true;
+      }
+
       if (prev.simPlaying && !next.simPlaying && cam.storeSyncPending) {
         commitCamToStore();
       }
@@ -525,10 +545,12 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
     };
   }, [commitCamToStore]);
 
-  // High-DPI ResizeObserver with smart backing-store cap for maximized viewports
+  // High-DPI ResizeObserver & WebGL context-loss watchdog
   useEffect(() => {
     const el = containerRef.current;
     const canvas = canvasRef.current;
+    const bgCanvas = bgCanvasRef.current;
+    const webglCanvas = webglCanvasRef.current;
     if (!el || !canvas) return;
     if (!staticCanvasRef.current) {
       staticCanvasRef.current = document.createElement("canvas");
@@ -548,6 +570,9 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
           : rawDpr;
       const targetW = Math.round(w * dpr);
       const targetH = Math.round(h * dpr);
+      const hybridWanted =
+        useSkyStore.getState().renderEnginePreference !== "canvas2d" && !webglDisabledRef.current;
+
       if (
         sizeRef.current.width !== w ||
         sizeRef.current.height !== h ||
@@ -564,18 +589,85 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
         staticCanvas.height = targetH;
         canvas.style.width = `${w}px`;
         canvas.style.height = `${h}px`;
+        if (bgCanvas) {
+          bgCanvas.width = hybridWanted ? targetW : 0;
+          bgCanvas.height = hybridWanted ? targetH : 0;
+        }
+        if (webglCanvas) {
+          webglCanvas.width = hybridWanted ? targetW : 0;
+          webglCanvas.height = hybridWanted ? targetH : 0;
+        }
         skyDirtyRef.current = true;
         needHqRefreshRef.current = true;
       }
+    };
+
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      if (webglLostTimerRef.current !== null) {
+        clearTimeout(webglLostTimerRef.current);
+      }
+      webglRendererRef.current?.dispose();
+      webglRendererRef.current = null;
+      webglLostTimerRef.current = window.setTimeout(() => {
+        webglLostTimerRef.current = null;
+        webglDisabledRef.current = true;
+        useSkyStore
+          .getState()
+          .reportActiveRenderEngine(
+            "canvas2d",
+            "WebGLコンテキストがロストし、自動復帰できなかったためCanvas 2D互換モードへフォールバックしました。",
+            null,
+          );
+        skyDirtyRef.current = true;
+        needHqRefreshRef.current = true;
+      }, 2500);
+      skyDirtyRef.current = true;
+      needHqRefreshRef.current = true;
+    };
+
+    const onContextRestored = () => {
+      if (webglLostTimerRef.current !== null) {
+        clearTimeout(webglLostTimerRef.current);
+        webglLostTimerRef.current = null;
+      }
+      webglRendererRef.current?.dispose();
+      webglRendererRef.current = null;
+      if (useSkyStore.getState().renderEnginePreference !== "canvas2d" && webglCanvas) {
+        try {
+          webglDisabledRef.current = false;
+          const wr = new WebglSkyRenderer(webglCanvas);
+          webglRendererRef.current = wr;
+          useSkyStore.getState().reportActiveRenderEngine(wr.engine, null, wr.gpuInfo);
+        } catch (err) {
+          webglDisabledRef.current = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          useSkyStore
+            .getState()
+            .reportActiveRenderEngine("canvas2d", `WebGL復帰エラー: ${msg}`, null);
+        }
+      }
+      skyDirtyRef.current = true;
+      needHqRefreshRef.current = true;
     };
 
     updateSize();
     const ro = new ResizeObserver(updateSize);
     ro.observe(el);
     window.addEventListener("resize", updateSize);
+    webglCanvas?.addEventListener("webglcontextlost", onContextLost);
+    webglCanvas?.addEventListener("webglcontextrestored", onContextRestored);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", updateSize);
+      webglCanvas?.removeEventListener("webglcontextlost", onContextLost);
+      webglCanvas?.removeEventListener("webglcontextrestored", onContextRestored);
+      if (webglLostTimerRef.current !== null) {
+        clearTimeout(webglLostTimerRef.current);
+        webglLostTimerRef.current = null;
+      }
+      webglRendererRef.current?.dispose();
+      webglRendererRef.current = null;
     };
   }, []);
 
@@ -818,19 +910,22 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
         commitCamToStore(nextModeOverride);
       }
 
-      // 7. Render sky canvas (1-pass fastInteractive while moving; crisp cached static layer when settled)
+      // 7. Render sky canvas (3-layer WebGL2/WebGL1 hybrid or Canvas 2D full fallback)
       const needHqSettledPass = !isActivelyMoving && needHqRefreshRef.current;
       if (isActivelyMoving || skyDirtyRef.current || needHqSettledPass || meteorFrameChanged) {
         const canvas = canvasRef.current;
+        const bgCanvas = bgCanvasRef.current;
+        const webglCanvas = webglCanvasRef.current;
         if (!staticCanvasRef.current) {
           staticCanvasRef.current = document.createElement("canvas");
           staticCanvasRef.current.width = canvas?.width ?? 0;
           staticCanvasRef.current.height = canvas?.height ?? 0;
         }
         const staticCanvas = staticCanvasRef.current;
-        const ctx = canvas?.getContext("2d", { alpha: false });
-        const staticCtx = staticCanvas.getContext("2d", { alpha: false });
+        const ctx = canvas?.getContext("2d", { alpha: true });
+        const staticCtx = staticCanvas.getContext("2d", { alpha: true });
         if (
+          canvas &&
           ctx &&
           staticCtx &&
           activeFrame &&
@@ -839,6 +934,8 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
           sizeRef.current.height > 0
         ) {
           const { width, height, dpr } = sizeRef.current;
+          const targetW = canvas.width;
+          const targetH = canvas.height;
           const params: ProjectionParams = {
             mode: nextModeOverride ?? st.projectionMode,
             width,
@@ -853,117 +950,240 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
           };
           const nightVision = useThemeStore.getState().theme === "night-vision";
 
-          if (isActivelyMoving) {
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            renderSkyCanvas({
-              ctx,
-              width,
-              height,
-              params,
-              frame: activeFrame,
-              location: st.location,
-              staticAssets: st.staticAssets,
-              starBuffer: st.starBuffer,
-              starCount: st.starCount,
-              dsoBuffer: st.dsoBuffer,
-              dsoCount: st.dsoCount,
-              limitingMag: st.limitingMag,
-              refractionEnabled: st.refractionEnabled,
-              layers: st.layers,
-              customColors: st.customColors,
-              trails: st.trails,
-              simLockMode: st.simLockMode,
-              simStepMinutes: st.simStepMinutes,
-              nightVision,
-              selectedObject: st.selectedObject,
-              atlas: atlasRef.current,
-              selectedMeteorShowerCode: st.selectedMeteorShowerCode,
-              meteorShowAllRadiants: st.meteorShowAllRadiants,
-              meteorParticles: meteorParticlesRef.current,
-              planetTracks: st.planetTracks,
-              fovPresets: st.fovPresets,
-              satellites: st.satellites,
-              showSatellites: st.showSatellites,
-              highlightedSatPass: st.highlightedSatPass,
-              landscapeConfig: st.landscapeConfig,
-              hipsConfig: st.hipsConfig,
-              offlineMode: st.offlineMode,
-              liveWeather: st.liveWeather,
-              showWeatherCloudsOverlay: st.showWeatherCloudsOverlay,
-              skipMeteors: false,
-              fastInteractive: true,
-              onTextureLoaded: () => {
-                skyDirtyRef.current = true;
-                needHqRefreshRef.current = true;
-              },
-            });
-            skyDirtyRef.current = false;
-            needHqRefreshRef.current = true;
+          let wr: WebglSkyRenderer | null = webglRendererRef.current;
+          const wantWebgl =
+            st.renderEnginePreference !== "canvas2d" &&
+            !webglDisabledRef.current &&
+            webglLostTimerRef.current === null;
+
+          if (wantWebgl && bgCanvas && webglCanvas) {
+            if (bgCanvas.width !== targetW || bgCanvas.height !== targetH) {
+              bgCanvas.width = targetW;
+              bgCanvas.height = targetH;
+            }
+            if (webglCanvas.width !== targetW || webglCanvas.height !== targetH) {
+              webglCanvas.width = targetW;
+              webglCanvas.height = targetH;
+            }
+            if (!wr) {
+              try {
+                wr = new WebglSkyRenderer(webglCanvas);
+                webglRendererRef.current = wr;
+                useSkyStore.getState().reportActiveRenderEngine(wr.engine, null, wr.gpuInfo);
+              } catch (err) {
+                webglDisabledRef.current = true;
+                wr = null;
+                const msg = err instanceof Error ? err.message : String(err);
+                useSkyStore
+                  .getState()
+                  .reportActiveRenderEngine("canvas2d", `WebGL初期化エラー: ${msg}`, null);
+              }
+            }
           } else {
-            if (skyDirtyRef.current || needHqRefreshRef.current) {
-              staticCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            if (wr) {
+              wr.dispose();
+              webglRendererRef.current = null;
+              wr = null;
+            }
+            if (st.renderEnginePreference === "canvas2d" && st.activeRenderEngine !== "canvas2d") {
+              useSkyStore.getState().reportActiveRenderEngine("canvas2d", null, null);
+            }
+          }
+
+          const bgCtx = wr && bgCanvas ? bgCanvas.getContext("2d", { alpha: false }) : null;
+          let hybridSucceeded = false;
+
+          const baseArgs = {
+            width,
+            height,
+            params,
+            frame: activeFrame,
+            location: st.location,
+            staticAssets: st.staticAssets,
+            starBuffer: st.starBuffer,
+            starCount: st.starCount,
+            dsoBuffer: st.dsoBuffer,
+            dsoCount: st.dsoCount,
+            limitingMag: st.limitingMag,
+            refractionEnabled: st.refractionEnabled,
+            layers: st.layers,
+            customColors: st.customColors,
+            trails: st.trails,
+            simLockMode: st.simLockMode,
+            simStepMinutes: st.simStepMinutes,
+            nightVision,
+            selectedObject: st.selectedObject,
+            atlas: atlasRef.current,
+            selectedMeteorShowerCode: st.selectedMeteorShowerCode,
+            meteorShowAllRadiants: st.meteorShowAllRadiants,
+            planetTracks: st.planetTracks,
+            fovPresets: st.fovPresets,
+            satellites: st.satellites,
+            showSatellites: st.showSatellites,
+            highlightedSatPass: st.highlightedSatPass,
+            landscapeConfig: st.landscapeConfig,
+            hipsConfig: st.hipsConfig,
+            offlineMode: st.offlineMode,
+            liveWeather: st.liveWeather,
+            showWeatherCloudsOverlay: st.showWeatherCloudsOverlay,
+            onTextureLoaded: () => {
+              skyDirtyRef.current = true;
+              needHqRefreshRef.current = true;
+            },
+          };
+
+          if (wr && bgCtx) {
+            try {
+              const renderWebglPass = () => {
+                wr!.render({
+                  width,
+                  height,
+                  dpr,
+                  params,
+                  frame: activeFrame,
+                  location: st.location,
+                  starBuffer: st.starBuffer,
+                  starCount: st.starCount,
+                  dsoBuffer: st.dsoBuffer,
+                  dsoCount: st.dsoCount,
+                  limitingMag: st.limitingMag,
+                  refractionEnabled: st.refractionEnabled,
+                  nightVision,
+                  dsoMarkersEnabled: st.layers.dsoMarkers,
+                  zoomTexturesEnabled: st.layers.zoomTextures,
+                  dsoHexColor: st.customColors.dso,
+                });
+              };
+
+              if (isActivelyMoving) {
+                bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                renderSkyCanvas({
+                  ...baseArgs,
+                  ctx: bgCtx,
+                  meteorParticles: [],
+                  skipMeteors: true,
+                  fastInteractive: true,
+                  renderPhase: "background",
+                });
+                renderWebglPass();
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                renderSkyCanvas({
+                  ...baseArgs,
+                  ctx,
+                  meteorParticles: meteorParticlesRef.current,
+                  skipMeteors: false,
+                  fastInteractive: true,
+                  renderPhase: "foreground",
+                  includeDsoMarkersInForeground: !wr.hasDsoInstancing,
+                });
+                skyDirtyRef.current = false;
+                needHqRefreshRef.current = true;
+              } else {
+                if (skyDirtyRef.current || needHqSettledPass) {
+                  bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                  renderSkyCanvas({
+                    ...baseArgs,
+                    ctx: bgCtx,
+                    meteorParticles: [],
+                    skipMeteors: true,
+                    fastInteractive: false,
+                    renderPhase: "background",
+                  });
+                  renderWebglPass();
+                  staticCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                  renderSkyCanvas({
+                    ...baseArgs,
+                    ctx: staticCtx,
+                    meteorParticles: [],
+                    skipMeteors: true,
+                    fastInteractive: false,
+                    renderPhase: "foreground",
+                    includeDsoMarkersInForeground: !wr.hasDsoInstancing,
+                  });
+                  skyDirtyRef.current = false;
+                  needHqRefreshRef.current = false;
+                }
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.clearRect(0, 0, targetW, targetH);
+                ctx.drawImage(staticCanvas, 0, 0);
+                if (meteorParticlesRef.current.length > 0 && activeFrame.view_mode !== "other_star") {
+                  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                  renderMeteorOverlay({
+                    ctx,
+                    width,
+                    height,
+                    params,
+                    frame: activeFrame,
+                    location: st.location,
+                    refractionEnabled: st.refractionEnabled,
+                    nightVision,
+                    meteorParticles: meteorParticlesRef.current,
+                  });
+                }
+              }
+              hybridSucceeded = true;
+            } catch (err) {
+              wr.dispose();
+              webglRendererRef.current = null;
+              webglDisabledRef.current = true;
+              const msg = err instanceof Error ? err.message : String(err);
+              useSkyStore
+                .getState()
+                .reportActiveRenderEngine("canvas2d", `WebGL描画エラー: ${msg}`, null);
+            }
+          }
+
+          if (!hybridSucceeded) {
+            if (bgCanvas && (bgCanvas.width !== 0 || bgCanvas.height !== 0)) {
+              bgCanvas.width = 0;
+              bgCanvas.height = 0;
+            }
+            if (webglCanvas && (webglCanvas.width !== 0 || webglCanvas.height !== 0)) {
+              webglCanvas.width = 0;
+              webglCanvas.height = 0;
+            }
+            if (isActivelyMoving) {
+              ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
               renderSkyCanvas({
-                ctx: staticCtx,
-                width,
-                height,
-                params,
-                frame: activeFrame,
-                location: st.location,
-                staticAssets: st.staticAssets,
-                starBuffer: st.starBuffer,
-                starCount: st.starCount,
-                dsoBuffer: st.dsoBuffer,
-                dsoCount: st.dsoCount,
-                limitingMag: st.limitingMag,
-                refractionEnabled: st.refractionEnabled,
-                layers: st.layers,
-                customColors: st.customColors,
-                trails: st.trails,
-                simLockMode: st.simLockMode,
-                simStepMinutes: st.simStepMinutes,
-                nightVision,
-                selectedObject: st.selectedObject,
-                atlas: atlasRef.current,
-                selectedMeteorShowerCode: st.selectedMeteorShowerCode,
-                meteorShowAllRadiants: st.meteorShowAllRadiants,
-                meteorParticles: [],
-                planetTracks: st.planetTracks,
-                fovPresets: st.fovPresets,
-                satellites: st.satellites,
-                showSatellites: st.showSatellites,
-                highlightedSatPass: st.highlightedSatPass,
-                landscapeConfig: st.landscapeConfig,
-                hipsConfig: st.hipsConfig,
-                offlineMode: st.offlineMode,
-                liveWeather: st.liveWeather,
-                showWeatherCloudsOverlay: st.showWeatherCloudsOverlay,
-                skipMeteors: true,
-                fastInteractive: false,
-                onTextureLoaded: () => {
-                  skyDirtyRef.current = true;
-                  needHqRefreshRef.current = true;
-                },
+                ...baseArgs,
+                ctx,
+                meteorParticles: meteorParticlesRef.current,
+                skipMeteors: false,
+                fastInteractive: true,
+                renderPhase: "all",
               });
               skyDirtyRef.current = false;
-              needHqRefreshRef.current = false;
-            }
-
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.drawImage(staticCanvas, 0, 0);
-
-            if (meteorParticlesRef.current.length > 0 && activeFrame.view_mode !== "other_star") {
-              ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-              renderMeteorOverlay({
-                ctx,
-                width,
-                height,
-                params,
-                frame: activeFrame,
-                location: st.location,
-                refractionEnabled: st.refractionEnabled,
-                nightVision,
-                meteorParticles: meteorParticlesRef.current,
-              });
+              needHqRefreshRef.current = true;
+            } else {
+              if (skyDirtyRef.current || needHqSettledPass) {
+                staticCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                renderSkyCanvas({
+                  ...baseArgs,
+                  ctx: staticCtx,
+                  meteorParticles: [],
+                  skipMeteors: true,
+                  fastInteractive: false,
+                  renderPhase: "all",
+                });
+                skyDirtyRef.current = false;
+                needHqRefreshRef.current = false;
+              }
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.drawImage(staticCanvas, 0, 0);
+              if (meteorParticlesRef.current.length > 0 && activeFrame.view_mode !== "other_star") {
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                renderMeteorOverlay({
+                  ctx,
+                  width,
+                  height,
+                  params,
+                  frame: activeFrame,
+                  location: st.location,
+                  refractionEnabled: st.refractionEnabled,
+                  nightVision,
+                  meteorParticles: meteorParticlesRef.current,
+                });
+              }
             }
           }
         }
@@ -1250,13 +1470,23 @@ export function SkyCanvas({ onTelemetry }: SkyCanvasProps) {
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden select-none">
       <canvas
+        ref={bgCanvasRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 block h-full w-full"
+      />
+      <canvas
+        ref={webglCanvasRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 block h-full w-full"
+      />
+      <canvas
         ref={canvasRef}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onPointerLeave={onPointerLeave}
-        className="block h-full w-full cursor-grab active:cursor-grabbing touch-none"
+        className="relative block h-full w-full cursor-grab active:cursor-grabbing touch-none"
       />
     </div>
   );

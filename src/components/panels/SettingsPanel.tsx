@@ -52,6 +52,7 @@ import type {
   OfflineCacheStats,
   OfflineObservationSnapshot,
   OfflineSnapshotMeta,
+  RenderEnginePreference,
   UnitSystem,
 } from "@/types/sky";
 
@@ -91,6 +92,10 @@ export function SettingsPanel() {
   const offlineMode = useSkyStore((s) => s.offlineMode);
   const unitSystem = useSkyStore((s) => s.unitSystem);
   const angleFormat = useSkyStore((s) => s.angleFormat);
+  const renderEnginePreference = useSkyStore((s) => s.renderEnginePreference);
+  const activeRenderEngine = useSkyStore((s) => s.activeRenderEngine);
+  const renderEngineFallbackReason = useSkyStore((s) => s.renderEngineFallbackReason);
+  const renderEngineGpuInfo = useSkyStore((s) => s.renderEngineGpuInfo);
   const locationsList = useSkyStore((s) => s.locationsList);
   const location = useSkyStore((s) => s.location);
 
@@ -99,6 +104,7 @@ export function SettingsPanel() {
   const setOfflineMode = useSkyStore((s) => s.setOfflineMode);
   const setUnitSystem = useSkyStore((s) => s.setUnitSystem);
   const setAngleFormat = useSkyStore((s) => s.setAngleFormat);
+  const setRenderEnginePreference = useSkyStore((s) => s.setRenderEnginePreference);
   const setDefaultLocation = useSkyStore((s) => s.setDefaultLocation);
   const exportProfileJson = useSkyStore((s) => s.exportProfileJson);
   const importProfileJson = useSkyStore((s) => s.importProfileJson);
@@ -446,6 +452,53 @@ export function SettingsPanel() {
                   </Button>
                 ))}
               </div>
+            </section>
+
+            {/* Rendering Engine */}
+            <section className="space-y-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]/80 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[var(--text-secondary)]">描画エンジン設定</span>
+                <span className="rounded bg-[var(--bg-surface-elevated)] px-1.5 py-0.5 font-mono-num text-[10px] text-[var(--accent)]">
+                  稼働中:{" "}
+                  {activeRenderEngine === "webgl2"
+                    ? "WebGL2 + Canvas 2D"
+                    : activeRenderEngine === "webgl1"
+                      ? "WebGL1 + Canvas 2D"
+                      : "Canvas 2D"}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {(
+                  [
+                    { id: "auto", label: "自動" },
+                    { id: "webgl", label: "WebGL優先" },
+                    { id: "canvas2d", label: "Canvas 2D互換" },
+                  ] as { id: RenderEnginePreference; label: string }[]
+                ).map((opt) => (
+                  <Button
+                    key={opt.id}
+                    type="button"
+                    size="sm"
+                    variant={renderEnginePreference === opt.id ? "default" : "outline"}
+                    className="h-7 px-1.5 text-[10px]"
+                    onClick={() => setRenderEnginePreference(opt.id)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="text-[10px] leading-relaxed text-[var(--text-muted)]">
+                {renderEnginePreference === "canvas2d"
+                  ? "Canvas 2D単独互換モードを手動選択中です。"
+                  : renderEngineGpuInfo
+                    ? `GPU: ${renderEngineGpuInfo}`
+                    : "恒星・DSOをGPU、天の川・星座線・文字をCanvas 2Dで分担描画します。"}
+              </div>
+              {renderEngineFallbackReason && (
+                <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface-elevated)]/80 px-2 py-1 text-[10px] text-[var(--status-danger)]">
+                  フォールバック理由: {renderEngineFallbackReason}
+                </div>
+              )}
             </section>
 
             {/* Auto Updater (Desktop & Android) */}

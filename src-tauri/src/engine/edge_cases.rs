@@ -258,11 +258,11 @@ fn binary_ipc_buffers_pack_all_stars_and_dsos() {
     let store = CatalogStore::load_from_dir(&assets_dir).expect("catalog load");
 
     let star_bytes = build_sky_star_bytes(&store);
-    assert_eq!(star_bytes.len(), store.stars.stars.len() * 20);
+    assert_eq!(star_bytes.len(), store.stars.stars.len() * 24);
     assert!(store.stars.stars.len() >= 100_000);
 
     let dso_bytes = build_sky_dso_bytes(&store);
-    assert_eq!(dso_bytes.len(), store.dsos.len() * 28);
+    assert_eq!(dso_bytes.len(), store.dsos.len() * 40);
     assert!(store.dsos.len() >= 10_000);
 
     // Check first packed DSO entry is M1 (Messier 1) and unit vector norm == 1.0
@@ -274,5 +274,12 @@ fn binary_ipc_buffers_pack_all_stars_and_dsos() {
     let z = read_f32(8);
     let norm = (x * x + y * y + z * z).sqrt();
     assert!((norm - 1.0).abs() < 1e-4, "DSO unit vector norm={norm}");
-    assert_eq!(read_f32(24), 1.0, "Messier 1 must be packed first");
+    let axis_ratio = read_f32(20);
+    assert!(
+        axis_ratio >= 0.18 && axis_ratio <= 1.0,
+        "axis_ratio={axis_ratio}"
+    );
+    assert_eq!(read_f32(32), 1.0, "Messier 1 must be packed first");
+    let dso_idx = u32::from_le_bytes(dso_bytes[36..40].try_into().unwrap());
+    assert!((dso_idx as usize) < store.dsos.len());
 }
